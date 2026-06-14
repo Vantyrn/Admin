@@ -301,16 +301,25 @@ export async function PATCH(request, { params }) {
       newStatus = "REJECTED";
       kycDecision = "rejected";
     } else if (action === "APPROVE_VENDOR") {
-      if (!vendor.sfx_store_code || !vendor.shadowfax_linked) {
-        return NextResponse.json({ error: "Vendor cannot be approved without Shadowfax integration." }, { status: 400 });
-      }
+      // NOTE: Shadowfax store-code linkage is TEMPORARILY not required for approval
+      // (per product decision). Re-enable this gate before going live with real delivery.
+      // if (!vendor.sfx_store_code || !vendor.shadowfax_linked) {
+      //   return NextResponse.json({ error: "Vendor cannot be approved without Shadowfax integration." }, { status: 400 });
+      // }
       newStatus = "ACTIVE";
     } else if (action === "REJECT_VENDOR") {
       newStatus = "REJECTED";
     } else if (action === "SUSPEND") {
       newStatus = "SUSPENDED";
     } else if (action === "DISABLE") {
-      newStatus = "DISABLED";
+      const { duration } = body;
+      if (duration && duration !== "permanent") {
+        const hours = parseInt(duration);
+        const expiryDate = new Date(Date.now() + hours * 60 * 60 * 1000);
+        newStatus = `DISABLED:${expiryDate.toISOString()}`;
+      } else {
+        newStatus = "DISABLED";
+      }
     } else if (action === "REACTIVATE") {
       newStatus = "ACTIVE";
     } else {

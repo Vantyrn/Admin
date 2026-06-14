@@ -132,6 +132,8 @@ export default function VendorDetailPage() {
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [isFlagDialogOpen, setIsFlagDialogOpen] = useState(false);
+  const [isDisableDialogOpen, setIsDisableDialogOpen] = useState(false);
+  const [disableDuration, setDisableDuration] = useState("1");
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -312,10 +314,16 @@ export default function VendorDetailPage() {
       const res = await fetch(`/api/vendors/${vendorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "DISABLE" })
+        body: JSON.stringify({ action: "DISABLE", duration: disableDuration })
       });
       if (!res.ok) throw new Error("Failed to disable vendor");
-      toast.error("Vendor disabled");
+      if (disableDuration === "permanent") {
+        toast.error("Vendor disabled permanently");
+      } else {
+        toast.error(`Vendor disabled for ${disableDuration} hour(s)`);
+      }
+      setIsDisableDialogOpen(false);
+      mutate();
     } catch (error) {
       toast.error(error.message);
     }
@@ -367,6 +375,7 @@ export default function VendorDetailPage() {
         throw new Error(err.error || "Failed to approve vendor");
       }
       toast.success("Vendor approved successfully and is now ACTIVE");
+      mutate();
     } catch (error) {
       toast.error(error.message);
     }
@@ -405,7 +414,10 @@ export default function VendorDetailPage() {
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <h1 className="text-2xl sm:text-3xl font-black text-swiggy-navy dark:text-white tracking-tight truncate">{vendor.businessName}</h1>
               {(() => {
-                const config = STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED;
+                const isTempDisabled = vendor.status && vendor.status.startsWith("DISABLED:");
+                const config = isTempDisabled 
+                  ? { label: "Disabled (Temp)", color: "bg-red-50 text-red-700 border-red-200" } 
+                  : (STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED);
                 return (
                   <Badge className={`${config.color} font-bold text-[9px] sm:text-[10px] uppercase tracking-wider whitespace-nowrap`}>
                     {config.label}
@@ -551,7 +563,10 @@ export default function VendorDetailPage() {
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-swiggy-gray">Vendor Status</p>
                         {(() => {
-                          const config = STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED;
+                          const isTempDisabled = vendor.status && vendor.status.startsWith("DISABLED:");
+                          const config = isTempDisabled 
+                            ? { label: "Disabled (Temp)", color: "bg-red-50 text-red-700 border-red-200" } 
+                            : (STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED);
                           return (
                             <Badge className={`${config.color} mt-1 font-bold text-[10px] uppercase tracking-wider`}>
                               {config.label}
@@ -575,7 +590,7 @@ export default function VendorDetailPage() {
                 <VendorMap lat={vendor.lat} lng={vendor.lng} />
               </CardContent>
             </Card>
-            <CommissionManagement vendor={vendor} vendorId={vendorId} />
+            <CommissionManagement vendor={vendor} vendorId={vendorId} onUpdated={mutate} />
           </div>
 
           <div className="space-y-6">
@@ -653,21 +668,21 @@ export default function VendorDetailPage() {
                    <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex gap-3 items-start mb-2">
                      <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
                      <p className="text-xs font-bold text-amber-900 leading-relaxed">
-                       Please configure Shadowfax Store Code before approving this vendor.
+                       Shadowfax Store Code isn&apos;t linked. Recommended before real delivery, but not required to approve.
                      </p>
                    </div>
                  )}
 
-                 <Button 
+                 <Button
                    className={`w-full h-14 font-black uppercase tracking-widest rounded-2xl gap-3 shadow-lg ${
-                     vendor.shadowfaxLinked 
-                       ? 'bg-green-500 hover:bg-green-600 text-white shadow-green-100' 
-                       : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                     vendor.status === 'ACTIVE'
+                       ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                       : 'bg-green-500 hover:bg-green-600 text-white shadow-green-100'
                    }`}
                    onClick={handleApproveVendor}
-                   disabled={!vendor.shadowfaxLinked || vendor.status === 'ACTIVE'}
+                   disabled={vendor.status === 'ACTIVE'}
                  >
-                   <CheckCircle2 className="w-5 h-5" /> 
+                   <CheckCircle2 className="w-5 h-5" />
                    {vendor.status === 'ACTIVE' ? 'Vendor Active' : 'Approve Vendor'}
                  </Button>
 
@@ -882,9 +897,9 @@ export default function VendorDetailPage() {
                   <Button 
                     variant="outline"
                     className="w-full h-14 border-red-200 text-red-500 hover:bg-red-50 font-black uppercase tracking-widest rounded-2xl gap-3"
-                    onClick={handleDisable}
+                    onClick={() => setIsDisableDialogOpen(true)}
                   >
-                    <XCircle className="w-5 h-5" /> Disable Vendor (Permanent)
+                    <XCircle className="w-5 h-5" /> Disable Vendor (Temporary / Permanent)
                   </Button>
                 )}
                 {vendor.status === 'SUSPENDED' && (
@@ -1087,6 +1102,43 @@ export default function VendorDetailPage() {
               toast.info("Compliance flag added");
               setIsFlagDialogOpen(false);
             }}>Add Flag</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Disable Vendor Dialog */}
+      <Dialog open={isDisableDialogOpen} onOpenChange={setIsDisableDialogOpen}>
+        <DialogContent className="sm:max-w-[500px] rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
+              <XCircle className="w-5 h-5" /> Disable Vendor Account
+            </DialogTitle>
+            <DialogDescription className="font-medium text-zinc-500">
+              Select the duration for disablement. The vendor app will show a ticking countdown for temporary durations.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label className="font-bold text-swiggy-navy">Select Duration</Label>
+              <Select value={disableDuration} onValueChange={setDisableDuration}>
+                <SelectTrigger className="h-11 rounded-xl font-bold">
+                  <SelectValue placeholder="Select duration" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="1" className="font-bold">1 Hour</SelectItem>
+                  <SelectItem value="6" className="font-bold">6 Hours</SelectItem>
+                  <SelectItem value="12" className="font-bold">12 Hours</SelectItem>
+                  <SelectItem value="24" className="font-bold">24 Hours</SelectItem>
+                  <SelectItem value="72" className="font-bold">3 Days</SelectItem>
+                  <SelectItem value="168" className="font-bold">1 Week</SelectItem>
+                  <SelectItem value="permanent" className="font-bold text-red-600">Permanent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" className="font-bold" onClick={() => setIsDisableDialogOpen(false)}>Cancel</Button>
+            <Button className="bg-red-500 hover:bg-red-600 font-bold px-6" onClick={handleDisable}>Confirm Disablement</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

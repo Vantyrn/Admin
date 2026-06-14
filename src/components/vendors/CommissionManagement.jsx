@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-export function CommissionManagement({ vendor, vendorId }) {
+export function CommissionManagement({ vendor, vendorId, onUpdated }) {
   const [isCommissionDialogOpen, setIsCommissionDialogOpen] = useState(false);
   const [tempModel, setTempModel] = useState("");
   const [tempRate, setTempRate] = useState("");
@@ -28,20 +28,33 @@ export function CommissionManagement({ vendor, vendorId }) {
   }, [vendor]);
 
   const handleUpdateCommission = async () => {
+    // Validate the numeric value before sending (rate must be 0–100).
+    const rate = parseFloat(tempRate);
+    if (isNaN(rate) || rate < 0 || rate > 100) {
+      toast.error("Commission rate must be a number between 0 and 100.");
+      return;
+    }
+
     setIsUpdating(true);
     try {
       const res = await fetch(`/api/vendors/${vendorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          action: "UPDATE_COMMISSION", 
-          commissionModel: tempModel, 
-          commissionRate: parseFloat(tempRate) 
+        body: JSON.stringify({
+          action: "UPDATE_COMMISSION",
+          commissionModel: tempModel,
+          commissionRate: rate
         })
       });
-      if (!res.ok) throw new Error("Failed to update commission settings");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update commission settings");
+      }
       toast.success("Commission settings updated");
       setIsCommissionDialogOpen(false);
+      // Refresh the parent's vendor data so the displayed rate updates immediately
+      // (no page reload needed).
+      if (onUpdated) onUpdated();
     } catch (error) {
       toast.error(error.message);
     } finally {
@@ -166,16 +179,24 @@ export function CommissionManagement({ vendor, vendorId }) {
                 </div>
               </div>
               <div className="relative group">
-                <input 
+                <input
                   type="number"
                   value={tempRate}
                   onChange={(e) => setTempRate(e.target.value)}
-                  className="w-full h-14 sm:h-16 rounded-xl sm:rounded-2xl border-2 border-zinc-100 bg-zinc-50/50 px-6 sm:px-8 font-black text-xl sm:text-2xl text-swiggy-navy focus:border-swiggy-orange focus:bg-white outline-none transition-all placeholder:text-zinc-300 shadow-inner"
+                  onKeyDown={(e) => { if (["e", "E", "+", "-"].includes(e.key)) e.preventDefault(); }}
+                  onBlur={(e) => {
+                    const n = parseFloat(e.target.value);
+                    if (isNaN(n)) { setTempRate(""); return; }
+                    setTempRate(String(Math.min(100, Math.max(0, n))));
+                  }}
+                  className="w-full h-14 sm:h-16 rounded-xl sm:rounded-2xl border-2 border-zinc-100 bg-zinc-50/50 pl-6 sm:pl-8 pr-10 sm:pr-12 text-right font-black text-xl sm:text-2xl text-swiggy-navy focus:border-swiggy-orange focus:bg-white outline-none transition-all placeholder:text-zinc-300 shadow-inner"
                   placeholder="5.0"
                   step="0.1"
+                  min="0"
+                  max="100"
                 />
-                <div className="absolute right-6 sm:right-8 top-1/2 -translate-y-1/2">
-                   <span className="text-lg font-black text-swiggy-gray/30">%</span>
+                <div className="absolute right-4 sm:right-5 top-1/2 -translate-y-1/2 pointer-events-none">
+                   <span className="text-lg font-black text-swiggy-gray/50">%</span>
                 </div>
               </div>
             </div>
