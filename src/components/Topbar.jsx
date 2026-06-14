@@ -66,7 +66,7 @@ export default function Topbar({ onMenuClick }) {
   };
   
   const { data, loading, mutate } = useRealtime("/api/notifications", {
-    interval: 1000,
+    interval: 30000, // 30s — was 1s, which hammered the API and risked rate limits
     toastConfig: {
       new: (n) => n.title,
       description: (n) => n.description

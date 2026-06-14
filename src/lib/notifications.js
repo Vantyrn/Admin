@@ -3,9 +3,7 @@
  */
 export async function sendMassNotification(audience, title, message) {
   try {
-    const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "https://vendor-backend-production-c171.up.railway.app"; 
-
-    const response = await fetch(`${BACKEND_URL}/api/admin/broadcast-notification`, {
+    const response = await fetch('/api/notifications', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

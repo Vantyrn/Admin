@@ -14,7 +14,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export default function DashboardPage() {
   const { data, loading } = useRealtime("/api/dashboard/stats", {
-    interval: 1000,
+    interval: 30000, // 30s — stats don't need per-second polling (was 1s)
     toastConfig: {
       new: (order) => `New Order Received!`,
       description: (order) => `Order #${order.id} for ₹${order.amount}`

@@ -210,3 +210,38 @@ export async function DELETE() {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+export async function POST(request) {
+  const admin = await getAdmin();
+  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  try {
+    const body = await request.json();
+    const { audience, title, message } = body;
+
+    const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL;
+    const ADMIN_SECRET = process.env.ADMIN_SECRET;
+    if (!BACKEND_URL) {
+      return NextResponse.json({ error: "NEXT_PUBLIC_BACKEND_URL is not configured" }, { status: 500 });
+    }
+
+    const res = await fetch(`${BACKEND_URL}/api/admin/broadcast-notification`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-admin-key': ADMIN_SECRET
+      },
+      body: JSON.stringify({ audience, title, message })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      return NextResponse.json({ error: data.error || data.message || "Failed to broadcast notification" }, { status: res.status });
+    }
+
+    return NextResponse.json(data);
+  } catch (error) {
+    console.error("Notifications Broadcast Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
