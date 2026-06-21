@@ -25,8 +25,12 @@ export function useRealtime(apiUrl, options = {}) {
   const [connected, setConnected] = useState(false);
   const dataRef = useRef(realtimeCache.get(apiUrl) || null);
   const isInitialLoad = useRef(!realtimeCache.has(apiUrl));
+  // Once the session is gone, stop polling so we don't throw a 401 every tick.
+  const stoppedRef = useRef(false);
 
   const fetchData = useCallback(async () => {
+    if (stoppedRef.current) return;
+
     // Optimization: Skip fetching if tab is hidden
     if (typeof document !== 'undefined' && document.hidden) {
       return;
@@ -34,6 +38,19 @@ export function useRealtime(apiUrl, options = {}) {
 
     try {
       const res = await fetch(apiUrl, { cache: 'no-store' });
+
+      // Session expired / not authenticated: stop polling and bounce to login
+      // once, instead of surfacing a 401 console error on every interval tick.
+      if (res.status === 401) {
+        stoppedRef.current = true;
+        setConnected(false);
+        setLoading(false);
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin-login')) {
+          window.location.href = '/admin-login';
+        }
+        return;
+      }
+
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const newData = await res.json();
 
@@ -91,6 +108,7 @@ export function useRealtime(apiUrl, options = {}) {
   useEffect(() => {
     // Reset state when apiUrl changes
     isInitialLoad.current = true;
+    stoppedRef.current = false;
     setLoading(true);
     
     fetchData();

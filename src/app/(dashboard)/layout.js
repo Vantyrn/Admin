@@ -10,6 +10,7 @@ export default function DashboardLayout({ children }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [authenticated, setAuthenticated] = useState(false);
+  const [admin, setAdmin] = useState(null);
   const pathname = usePathname();
   const router = useRouter();
 
@@ -18,6 +19,8 @@ export default function DashboardLayout({ children }) {
       try {
         const res = await fetch("/api/admin/me");
         if (res.ok) {
+          const data = await res.json();
+          setAdmin(data.user);
           setAuthenticated(true);
         } else {
           router.push("/admin-login");
@@ -76,7 +79,7 @@ export default function DashboardLayout({ children }) {
       {/* Main Content Area */}
       <div className="flex-1 lg:ml-64 flex flex-col min-w-0 transition-all duration-300">
         {/* Topbar - Passing toggle function */}
-        <Topbar onMenuClick={toggleSidebar} />
+        <Topbar onMenuClick={toggleSidebar} admin={admin} />
 
         {/* Scrollable Page Content */}
         <main className="flex-1 p-3 sm:p-4 md:p-8 overflow-y-auto overflow-x-hidden">

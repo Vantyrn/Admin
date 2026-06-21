@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/prisma";
 import { NextResponse } from "next/server";
 import { uploadToR2 } from "@/lib/cloudflare";
+import { getAdmin } from "@/lib/auth";
+import { logActivity } from "@/lib/audit";
+import logger from "@/lib/logger";
 import crypto from "crypto";
 
 export async function GET() {
@@ -39,13 +42,18 @@ export async function GET() {
 
     return NextResponse.json(mappedVendors);
   } catch (error) {
-    console.error("Vendors API Error:", error);
+    logger.error("Failed to list vendors", error, {
+      component: "api/vendors",
+      operation: "GET listVendors",
+    });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
 
 export async function POST(request) {
   try {
+    const admin = await getAdmin();
+
     const formData = await request.formData();
     
     // Extracting fields from formData
@@ -73,14 +81,29 @@ export async function POST(request) {
     const panCardFile = formData.get("panCard");
     const addressProofFile = formData.get("addressProof");
 
-    // Upload files to R2
-    const [govIdUrl, businessProofUrl, panCardUrl, addressProofUrl, logoUrl] = await Promise.all([
-      uploadToR2(govIdFile, "kyc/gov_id"),
-      uploadToR2(businessProofFile, "kyc/business_proof"),
-      uploadToR2(panCardFile, "kyc/pan"),
-      uploadToR2(addressProofFile, "kyc/address_proof"),
-      uploadToR2(logoFile, "logos"),
-    ]);
+    // Upload files to R2 (isolated so a storage failure is reported as exactly that,
+    // and not confused with a later database error).
+    let govIdUrl, businessProofUrl, panCardUrl, addressProofUrl, logoUrl;
+    try {
+      [govIdUrl, businessProofUrl, panCardUrl, addressProofUrl, logoUrl] = await Promise.all([
+        uploadToR2(govIdFile, "kyc/gov_id"),
+        uploadToR2(businessProofFile, "kyc/business_proof"),
+        uploadToR2(panCardFile, "kyc/pan"),
+        uploadToR2(addressProofFile, "kyc/address_proof"),
+        uploadToR2(logoFile, "logos"),
+      ]);
+    } catch (uploadError) {
+      logger.error("Vendor document upload to R2 failed", uploadError, {
+        component: "lib/cloudflare (R2)",
+        operation: "POST createVendor → uploadToR2",
+        adminId: admin?.id,
+        businessName,
+      });
+      return NextResponse.json(
+        { error: "Failed to upload vendor documents to storage. Please try again." },
+        { status: 502 }
+      );
+    }
 
     const vendorId = crypto.randomUUID();
 
@@ -186,9 +209,35 @@ export async function POST(request) {
       return vendor;
     });
 
+    // Audit: admin added a vendor, and which KYC documents were uploaded for them.
+    const uploadedDocs = [
+      govIdUrl && "Government ID",
+      businessProofUrl && "Business Proof",
+      panCardUrl && "PAN Card",
+      addressProofUrl && "Address Proof",
+    ].filter(Boolean);
+
+    await logActivity(
+      "VENDOR_CREATED",
+      { vendorId: result.id, businessName, ownerName, category, uploadedDocuments: uploadedDocs },
+      admin?.id
+    );
+
+    if (uploadedDocs.length > 0) {
+      await logActivity(
+        "VENDOR_DOCUMENTS_UPLOADED",
+        { vendorId: result.id, businessName, documents: uploadedDocs },
+        admin?.id
+      );
+    }
+
     return NextResponse.json(result);
   } catch (error) {
-    console.error("Vendor Creation Error:", error);
+    logger.error("Vendor creation failed (database transaction)", error, {
+      component: "api/vendors",
+      operation: "POST createVendor (db transaction)",
+      prismaCode: error?.code,
+    });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
