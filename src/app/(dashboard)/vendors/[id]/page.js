@@ -82,6 +82,15 @@ const STATUS_CONFIG = {
 
 const mapContainerStyle = { width: '100%', height: '256px', cursor: 'pointer' };
 
+// KYC document slots — `field` is the multipart key the API expects, `type` matches the
+// `type` label returned by the vendor GET API so we can surface the currently-stored file.
+const KYC_DOC_FIELDS = [
+  { field: "govId", label: "Government ID", type: "Government ID" },
+  { field: "businessProof", label: "Business Proof", type: "Business Proof" },
+  { field: "panCard", label: "PAN Card", type: "PAN Card" },
+  { field: "addressProof", label: "Address Proof", type: "Address Proof" },
+];
+
 function VendorMap({ lat, lng }) {
   const { isLoaded } = useJsApiLoader({
     id: 'google-map-script',
@@ -155,6 +164,7 @@ export default function VendorDetailPage() {
     upiId: "",
   });
   const [updatingDetails, setUpdatingDetails] = useState(false);
+  const [kycFiles, setKycFiles] = useState({ govId: null, businessProof: null, panCard: null, addressProof: null });
 
   useEffect(() => {
     if (vendor) {
@@ -186,6 +196,7 @@ export default function VendorDetailPage() {
     }
     setUpdatingDetails(true);
     try {
+      // 1. Save the general business + bank details (JSON).
       const res = await fetch(`/api/vendors/${vendorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -196,8 +207,23 @@ export default function VendorDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update vendor details");
+
+      // 2. If the admin picked any replacement KYC documents, upload them (multipart).
+      const selectedDocs = Object.entries(kycFiles).filter(([, file]) => file);
+      if (selectedDocs.length > 0) {
+        const fd = new FormData();
+        selectedDocs.forEach(([field, file]) => fd.append(field, file));
+        const kycRes = await fetch(`/api/vendors/${vendorId}/kyc`, {
+          method: "PUT",
+          body: fd,
+        });
+        const kycData = await kycRes.json();
+        if (!kycRes.ok) throw new Error(kycData.error || "Vendor details saved, but updating KYC documents failed.");
+      }
+
       toast.success("Vendor details updated successfully!");
       setIsEditModalOpen(false);
+      setKycFiles({ govId: null, businessProof: null, panCard: null, addressProof: null });
       mutate();
     } catch (error) {
       toast.error(error.message);
@@ -1144,14 +1170,17 @@ export default function VendorDetailPage() {
       </Dialog>
 
       {/* Edit Vendor Details Dialog */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+      <Dialog open={isEditModalOpen} onOpenChange={(open) => {
+        setIsEditModalOpen(open);
+        if (!open) setKycFiles({ govId: null, businessProof: null, panCard: null, addressProof: null });
+      }}>
         <DialogContent className="sm:max-w-[700px] w-[95vw] max-h-[90vh] overflow-y-auto rounded-3xl bg-white border border-zinc-100 shadow-2xl p-0">
           <DialogHeader className="p-8 pb-4 border-b border-zinc-50">
             <DialogTitle className="text-2xl font-black text-swiggy-navy uppercase tracking-tight flex items-center gap-2">
               <Edit className="w-6 h-6 text-swiggy-orange" /> Edit Vendor Details
             </DialogTitle>
             <DialogDescription className="text-sm font-medium text-zinc-500">
-              Modify the general business details and bank settlement information for <strong>{vendor.businessName}</strong>.
+              Modify the general business details, bank settlement information, and KYC documents for <strong>{vendor.businessName}</strong>.
             </DialogDescription>
           </DialogHeader>
 
@@ -1164,6 +1193,9 @@ export default function VendorDetailPage() {
                   </TabsTrigger>
                   <TabsTrigger value="bank" className="rounded-lg px-4 py-2 font-bold data-[state=active]:bg-white data-[state=active]:text-swiggy-navy data-[state=active]:shadow-sm text-xs sm:text-sm">
                     Bank Details
+                  </TabsTrigger>
+                  <TabsTrigger value="kyc" className="rounded-lg px-4 py-2 font-bold data-[state=active]:bg-white data-[state=active]:text-swiggy-navy data-[state=active]:shadow-sm text-xs sm:text-sm">
+                    KYC Documents
                   </TabsTrigger>
                 </TabsList>
               </div>
@@ -1328,14 +1360,63 @@ export default function VendorDetailPage() {
                   </div>
                 </div>
               </TabsContent>
+
+              <TabsContent value="kyc" className="p-8 space-y-6">
+                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4 flex gap-3 items-start">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-xs font-bold text-amber-900 leading-relaxed">
+                    Upload a new file only for the documents you want to replace. Documents left blank stay as they are.
+                  </p>
+                </div>
+
+                <div className="space-y-5">
+                  {KYC_DOC_FIELDS.map((doc) => {
+                    const currentUrl = vendor.kycDocuments?.find(d => d.type === doc.type)?.url;
+                    const selectedFile = kycFiles[doc.field];
+                    return (
+                      <div key={doc.field} className="flex flex-col gap-2 rounded-2xl border border-zinc-100 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-xs font-black uppercase tracking-wider text-swiggy-navy">{doc.label}</Label>
+                          {currentUrl ? (
+                            <a
+                              href={currentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-xs font-bold text-swiggy-orange hover:underline"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View current
+                            </a>
+                          ) : (
+                            <span className="text-xs font-bold text-red-400 italic">Not uploaded</span>
+                          )}
+                        </div>
+                        <Input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => setKycFiles(prev => ({ ...prev, [doc.field]: e.target.files?.[0] || null }))}
+                          className="h-12 rounded-xl border border-zinc-200 font-bold focus:border-swiggy-orange text-sm px-4 py-2.5 file:mr-3 file:rounded-lg file:bg-swiggy-orange/10 file:px-3 file:py-1.5 file:font-bold file:text-swiggy-orange cursor-pointer"
+                        />
+                        {selectedFile && (
+                          <p className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> New file selected: {selectedFile.name}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </TabsContent>
             </Tabs>
 
             <DialogFooter className="p-8 border-t border-zinc-50 bg-zinc-50/20 gap-3 sm:gap-0">
-              <Button 
-                type="button" 
-                variant="outline" 
-                className="rounded-xl font-bold h-12 px-6 border-zinc-200" 
-                onClick={() => setIsEditModalOpen(false)}
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl font-bold h-12 px-6 border-zinc-200"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setKycFiles({ govId: null, businessProof: null, panCard: null, addressProof: null });
+                }}
               >
                 Cancel
               </Button>
