@@ -65,8 +65,13 @@ export async function POST(request) {
     const address = formData.get("address");
     const latitude = formData.get("latitude");
     const longitude = formData.get("longitude");
-    const openTime = formData.get("openTime") || "09:00";
-    const closeTime = formData.get("closeTime") || "22:00";
+    // Per-day operating hours (JSON from the Add-Vendor form). Falls back to an
+    // open-every-day 09:00–22:00 schedule for older clients that don't send it.
+    let operatingHours = null;
+    try {
+      const rawHours = formData.get("operatingHours");
+      if (rawHours) operatingHours = JSON.parse(rawHours);
+    } catch (_) { operatingHours = null; }
     const description = formData.get("description") || "";
     const logoFile = formData.get("logo");
 
@@ -81,16 +86,25 @@ export async function POST(request) {
     const panCardFile = formData.get("panCard");
     const addressProofFile = formData.get("addressProof");
 
+    // Generate the vendor id up-front so KYC documents can be stored under the SAME
+    // deterministic, per-vendor key format the Vendor app uses: kyc/<vendorId>/<docType>.<ext>
+    // (doc tokens kept identical to the Vendor app: gov_id, biz_proof, pan, address_proof).
+    const vendorId = crypto.randomUUID();
+    const fileExt = (f, fallback = "jpg") => {
+      const ext = f?.name?.split(".").pop()?.toLowerCase();
+      return ext && ext.length <= 5 ? ext : fallback;
+    };
+
     // Upload files to R2 (isolated so a storage failure is reported as exactly that,
     // and not confused with a later database error).
     let govIdUrl, businessProofUrl, panCardUrl, addressProofUrl, logoUrl;
     try {
       [govIdUrl, businessProofUrl, panCardUrl, addressProofUrl, logoUrl] = await Promise.all([
-        uploadToR2(govIdFile, "kyc/gov_id"),
-        uploadToR2(businessProofFile, "kyc/business_proof"),
-        uploadToR2(panCardFile, "kyc/pan"),
-        uploadToR2(addressProofFile, "kyc/address_proof"),
-        uploadToR2(logoFile, "logos"),
+        uploadToR2(govIdFile, null, { key: `kyc/${vendorId}/gov_id.${fileExt(govIdFile)}` }),
+        uploadToR2(businessProofFile, null, { key: `kyc/${vendorId}/biz_proof.${fileExt(businessProofFile)}` }),
+        uploadToR2(panCardFile, null, { key: `kyc/${vendorId}/pan.${fileExt(panCardFile)}` }),
+        uploadToR2(addressProofFile, null, { key: `kyc/${vendorId}/address_proof.${fileExt(addressProofFile)}` }),
+        uploadToR2(logoFile, null, { key: `logos/${vendorId}.${fileExt(logoFile, "png")}` }),
       ]);
     } catch (uploadError) {
       logger.error("Vendor document upload to R2 failed", uploadError, {
@@ -104,8 +118,6 @@ export async function POST(request) {
         { status: 502 }
       );
     }
-
-    const vendorId = crypto.randomUUID();
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Check or Create Profile under Path A
@@ -179,30 +191,34 @@ export async function POST(request) {
         }
       });
 
-      // 4. Create Operating Hours (All 7 days)
-      const operatingHoursData = [];
-      for (let i = 1; i <= 7; i++) {
-        operatingHoursData.push({
+      // 4. Create Operating Hours (per-day; day_of_week 1=Monday … 7=Sunday).
+      const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      const operatingHoursData = WEEK_DAYS.map((day, idx) => {
+        const cfg = (operatingHours && operatingHours[day]) || {};
+        return {
           id: crypto.randomUUID(),
           vendor_id: vendorId,
-          day_of_week: i,
-          open_time: openTime,
-          close_time: closeTime,
-          is_closed: false
-        });
-      }
+          day_of_week: idx + 1,
+          open_time: cfg.open || "09:00",
+          close_time: cfg.close || "22:00",
+          is_closed: !!cfg.isClosed,
+        };
+      });
       await tx.vendor_operating_hours.createMany({
         data: operatingHoursData
       });
 
-      // 5. Create Admin Notification
+      // 5. Create Admin Notification (clickable → vendor detail). Shares the same
+      // reference_id format as the KYC sync so it never double-notifies for one vendor.
       await tx.admin_notifications.create({
         data: {
           id: crypto.randomUUID(),
           title: "KYC Pending Review",
           description: `Vendor '${businessName}' uploaded documents`,
           type: "KYC",
-          is_read: false
+          is_read: false,
+          reference_id: `vendor_kyc_${vendorId}`,
+          link: `/vendors/${vendorId}`,
         }
       });
 

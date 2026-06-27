@@ -16,7 +16,7 @@ const R2_CONFIGURED = Boolean(
   process.env.CLOUDFLARE_BUCKET_NAME
 );
 
-export async function uploadToR2(file, folder = "vendors") {
+export async function uploadToR2(file, folder = "vendors", { key } = {}) {
   // No file, or an empty file input (browsers send a 0-byte File for empty <input type=file>).
   if (!file || typeof file.arrayBuffer !== "function" || file.size === 0) return null;
 
@@ -28,8 +28,11 @@ export async function uploadToR2(file, folder = "vendors") {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const fileName = `${folder}/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
-  
+  // Prefer an explicit deterministic key (e.g. kyc/<vendorId>/<docType>.<ext>) so the
+  // Admin and Vendor apps store KYC docs identically — scoped per vendor and overwritten
+  // cleanly on re-upload. Fall back to a timestamped name under `folder` for generic uploads.
+  const fileName = key || `${folder}/${Date.now()}-${file.name.replace(/\s+/g, "-")}`;
+
   const command = new PutObjectCommand({
     Bucket: process.env.CLOUDFLARE_BUCKET_NAME,
     Key: fileName,

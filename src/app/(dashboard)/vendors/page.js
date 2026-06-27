@@ -79,6 +79,10 @@ const STATUS_CONFIG = {
   DISABLED: { label: "Disabled", color: "bg-gray-100 text-gray-700 border-gray-200" },
 };
 
+const WEEK_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const defaultOperatingHours = () =>
+  WEEK_DAYS.reduce((acc, d) => ({ ...acc, [d]: { isClosed: false, open: '09:00', close: '22:00' } }), {});
+
 export default function VendorsPage() {
   const { data: vendors, loading } = useRealtime("/api/vendors", {
     toastConfig: {
@@ -200,8 +204,7 @@ export default function VendorsPage() {
     address: "",
     latitude: "",
     longitude: "",
-    openTime: "",
-    closeTime: "",
+    operatingHours: defaultOperatingHours(),
     description: "",
     logo: null,
     accountHolderName: "",
@@ -215,7 +218,16 @@ export default function VendorsPage() {
     addressProof: null,
   });
 
-
+  // Admin-managed business categories for the "Add Vendor" dropdown.
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/categories?active=1")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => { if (active) setCategoryOptions(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   const handleInputChange = (e) => {
     const { id, value } = e.target;
@@ -224,6 +236,26 @@ export default function VendorsPage() {
 
   const handleSelectChange = (value) => {
     setFormData((prev) => ({ ...prev, category: value }));
+  };
+
+  // Per-day operating hours: toggle a weekday open/closed, or set its open/close time.
+  const toggleDay = (day) => {
+    setFormData((prev) => ({
+      ...prev,
+      operatingHours: {
+        ...prev.operatingHours,
+        [day]: { ...prev.operatingHours[day], isClosed: !prev.operatingHours[day].isClosed },
+      },
+    }));
+  };
+  const setDayTime = (day, field, value) => {
+    setFormData((prev) => ({
+      ...prev,
+      operatingHours: {
+        ...prev.operatingHours,
+        [day]: { ...prev.operatingHours[day], [field]: value },
+      },
+    }));
   };
 
   const handleFileChange = (e, field) => {
@@ -244,7 +276,10 @@ export default function VendorsPage() {
     try {
       const data = new FormData();
       Object.entries(formData).forEach(([key, value]) => {
-        if (value) data.append(key, value);
+        if (!value) return;
+        // operatingHours is an object — send it as JSON so the API gets per-day open/closed.
+        if (key === "operatingHours") { data.append(key, JSON.stringify(value)); return; }
+        data.append(key, value);
       });
 
       const response = await fetch("/api/vendors", {
@@ -267,7 +302,7 @@ export default function VendorsPage() {
       setCurrentStep(1);
       setFormData({
         businessName: "", ownerName: "", phone: "", email: "", category: "",
-        address: "", latitude: "", longitude: "", openTime: "", closeTime: "",
+        address: "", latitude: "", longitude: "", operatingHours: defaultOperatingHours(),
         description: "", logo: null, accountHolderName: "", bankName: "", accountNumber: "",
         ifscCode: "", upiId: "", govId: null, businessProof: null,
         panCard: null, addressProof: null
@@ -384,36 +419,59 @@ export default function VendorsPage() {
                           <SelectValue placeholder="Select Category" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="north-indian">North Indian</SelectItem>
-                          <SelectItem value="south-indian">South Indian</SelectItem>
-                          <SelectItem value="fast-food">Fast Food</SelectItem>
-                          <SelectItem value="desserts">Desserts</SelectItem>
-                          <SelectItem value="beverages">Beverages</SelectItem>
+                          {categoryOptions.length === 0 ? (
+                            <SelectItem value="General">General</SelectItem>
+                          ) : (
+                            categoryOptions.map((c) => (
+                              <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2">
-                        <Label htmlFor="openTime" className="font-bold text-zinc-700">Open Time *</Label>
-                        <Input 
-                          id="openTime" 
-                          type="time"
-                          value={formData.openTime}
-                          onChange={handleInputChange}
-                          required 
-                          className="h-12 rounded-xl border-zinc-200"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="closeTime" className="font-bold text-zinc-700">Close Time *</Label>
-                        <Input 
-                          id="closeTime" 
-                          type="time"
-                          value={formData.closeTime}
-                          onChange={handleInputChange}
-                          required 
-                          className="h-12 rounded-xl border-zinc-200"
-                        />
+                    <div className="space-y-2">
+                      <Label className="font-bold text-zinc-700">Operating Hours *</Label>
+                      <p className="text-xs text-zinc-500">Toggle a day off if the store is closed that day.</p>
+                      <div className="rounded-xl border border-zinc-200 divide-y divide-zinc-100">
+                        {WEEK_DAYS.map((day) => {
+                          const cfg = formData.operatingHours[day];
+                          return (
+                            <div key={day} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                              <div className="flex items-center gap-3 w-36 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleDay(day)}
+                                  role="switch"
+                                  aria-checked={!cfg.isClosed}
+                                  aria-label={`Toggle ${day} open or closed`}
+                                  className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${cfg.isClosed ? "bg-zinc-300" : "bg-emerald-500"}`}
+                                >
+                                  <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${cfg.isClosed ? "translate-x-0.5" : "translate-x-[22px]"}`} />
+                                </button>
+                                <span className={`text-sm font-semibold ${cfg.isClosed ? "text-zinc-400 line-through" : "text-zinc-700"}`}>{day}</span>
+                              </div>
+                              {cfg.isClosed ? (
+                                <span className="text-sm italic text-zinc-400">Closed</span>
+                              ) : (
+                                <div className="flex items-center gap-2">
+                                  <Input
+                                    type="time"
+                                    value={cfg.open}
+                                    onChange={(e) => setDayTime(day, "open", e.target.value)}
+                                    className="h-10 w-28 rounded-lg border-zinc-200"
+                                  />
+                                  <span className="text-zinc-400">–</span>
+                                  <Input
+                                    type="time"
+                                    value={cfg.close}
+                                    onChange={(e) => setDayTime(day, "close", e.target.value)}
+                                    className="h-10 w-28 rounded-lg border-zinc-200"
+                                  />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                     <LocationPicker 
