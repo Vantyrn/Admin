@@ -16,7 +16,8 @@ import {
   Package,
   PackagePlus,
   Bell,
-  Settings
+  Settings,
+  Tags
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { name: "Dashboard", icon: LayoutDashboard, href: "/dashboard" },
   { name: "Vendors", icon: Store, href: "/vendors" },
+  { name: "Categories", icon: Tags, href: "/categories" },
   { name: "Products", icon: Package, href: "/products" },
   { name: "Customers", icon: Users, href: "/customers" },
   { name: "Orders", icon: Receipt, href: "/orders" },

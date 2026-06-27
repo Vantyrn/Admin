@@ -997,6 +997,21 @@ model categories {
   @@schema("vendor_delivery")
 }
 
+// Master list of vendor BUSINESS categories (cuisine / store type) chosen during
+// vendor registration. Admin-managed (add/edit/soft-disable). This is distinct from
+// the `categories` table above, which holds per-vendor product/menu categories.
+model business_categories {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @unique @db.VarChar(100)
+  is_food       Boolean  @default(true)
+  display_order Int      @default(0)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@schema("vendor_delivery")
+}
+
 enum ReviewDecision {
   approved
   rejected

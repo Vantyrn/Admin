@@ -165,6 +165,17 @@ export default function VendorDetailPage() {
   });
   const [updatingDetails, setUpdatingDetails] = useState(false);
   const [kycFiles, setKycFiles] = useState({ govId: null, businessProof: null, panCard: null, addressProof: null });
+  const [categoryOptions, setCategoryOptions] = useState([]);
+
+  // Load the admin-managed business categories for the Edit dialog dropdown.
+  useEffect(() => {
+    let active = true;
+    fetch("/api/categories?active=1")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => { if (active) setCategoryOptions(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (vendor) {
@@ -1252,15 +1263,17 @@ export default function VendorDetailPage() {
                         <SelectValue placeholder="Select Category" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="South Indian">South Indian</SelectItem>
-                        <SelectItem value="North Indian">North Indian</SelectItem>
-                        <SelectItem value="Chinese">Chinese</SelectItem>
-                        <SelectItem value="Italian">Italian</SelectItem>
-                        <SelectItem value="Desserts">Desserts</SelectItem>
-                        <SelectItem value="Biryani">Biryani</SelectItem>
-                        <SelectItem value="Burgers & Pizzas">Burgers & Pizzas</SelectItem>
-                        <SelectItem value="Bakery">Bakery</SelectItem>
-                        <SelectItem value="General">General</SelectItem>
+                        {(() => {
+                          const names = categoryOptions.map((c) => c.name);
+                          // Keep the vendor's current category selectable even if it was
+                          // since disabled or predates the managed list.
+                          if (editForm.category && !names.includes(editForm.category)) {
+                            names.unshift(editForm.category);
+                          }
+                          return names.map((name) => (
+                            <SelectItem key={name} value={name}>{name}</SelectItem>
+                          ));
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
