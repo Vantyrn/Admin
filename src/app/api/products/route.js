@@ -39,15 +39,26 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { 
-      name, vendor_id, base_price, category, product_type, 
+    const {
+      name, vendor_id, base_price, category, product_type,
       review_status, description, imageUrl, is_customizable, customization_type, template_id,
-      customization_groups 
+      customization_groups, add_ons
     } = body;
 
     if (!name || !vendor_id || !base_price) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
+
+    // Keep only groups/options/add-ons that actually have a name, so empty builder
+    // rows don't create junk records.
+    const cleanGroups = (customization_groups || [])
+      .filter(g => g?.name?.trim())
+      .map((group, gIdx) => ({
+        ...group,
+        display_order: group.display_order ?? gIdx,
+        options: (group.options || []).filter(o => o?.name?.trim()),
+      }));
+    const cleanAddons = (add_ons || []).filter(a => a?.name?.trim());
 
     const productId = crypto.randomUUID();
 
@@ -72,9 +83,18 @@ export async function POST(request) {
             }
           }
         }),
-        ...(customization_groups && customization_groups.length > 0 && {
+        ...(cleanAddons.length > 0 && {
+          product_addons: {
+            create: cleanAddons.map(a => ({
+              name: a.name.trim(),
+              price: Number(a.price) || 0,
+              free_limit: Number(a.free_limit) || 0,
+            }))
+          }
+        }),
+        ...(cleanGroups.length > 0 && {
           product_customization_groups: {
-            create: customization_groups.map((group, gIdx) => ({
+            create: cleanGroups.map((group, gIdx) => ({
               name: group.name,
               is_required: group.is_required || false,
               selection_type: group.selection_type || "SINGLE",
@@ -96,6 +116,7 @@ export async function POST(request) {
         })
       },
       include: {
+        product_addons: true,
         product_customization_groups: {
           include: {
             product_customization_options: true

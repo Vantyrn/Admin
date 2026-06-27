@@ -8,7 +8,10 @@ export async function GET() {
     const templates = await prisma.byo_templates.findMany({
       include: {
         byo_template_groups: {
-          orderBy: { display_order: 'asc' }
+          orderBy: { display_order: 'asc' },
+          include: {
+            byo_template_options: { orderBy: { display_order: 'asc' } }
+          }
         },
         vendor_assigned_templates: {
           include: {
@@ -45,15 +48,24 @@ export async function POST(request) {
         category,
         description,
         byo_template_groups: {
-          create: groups?.map((g, index) => ({
-            name: g.name,
+          create: (groups || []).filter(g => g?.name?.trim()).map((g, index) => ({
+            name: g.name.trim(),
             selection_type: g.selection_type || "SINGLE",
             is_required: g.is_required || false,
             max_limit: g.max_limit || null,
             free_threshold: g.free_threshold || 0,
             extra_price: g.extra_price || 0,
-            display_order: g.display_order ?? index
-          })) || []
+            display_order: g.display_order ?? index,
+            byo_template_options: {
+              create: (g.options || []).filter(o => o?.name?.trim()).map((o, oi) => ({
+                name: o.name.trim(),
+                price_modifier: Number(o.price_modifier) || 0,
+                is_available: o.is_available !== false,
+                display_order: o.display_order ?? oi,
+                image_url: o.image_url || null,
+              }))
+            }
+          }))
         },
         vendor_assigned_templates: {
           create: allVendors.map(v => ({
@@ -100,19 +112,30 @@ export async function PUT(request) {
         category,
         description,
         byo_template_groups: {
-          create: groups?.map((g, index) => ({
-            name: g.name,
+          create: (groups || []).filter(g => g?.name?.trim()).map((g, index) => ({
+            name: g.name.trim(),
             selection_type: g.selection_type || "SINGLE",
             is_required: g.is_required || false,
             max_limit: g.max_limit || null,
             free_threshold: g.free_threshold || 0,
             extra_price: g.extra_price || 0,
-            display_order: g.display_order ?? index
-          })) || []
+            display_order: g.display_order ?? index,
+            byo_template_options: {
+              create: (g.options || []).filter(o => o?.name?.trim()).map((o, oi) => ({
+                name: o.name.trim(),
+                price_modifier: Number(o.price_modifier) || 0,
+                is_available: o.is_available !== false,
+                display_order: o.display_order ?? oi,
+                image_url: o.image_url || null,
+              }))
+            }
+          }))
         }
       },
       include: {
-        byo_template_groups: true
+        byo_template_groups: {
+          include: { byo_template_options: true }
+        }
       }
     });
 

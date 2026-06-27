@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Bell, Search, User, Menu, ShoppingBag, UserPlus, Info, Check } from "lucide-react";
+import { Bell, Search, User, Menu, ShoppingBag, UserPlus, Info, Check, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useRealtime } from "@/hooks/use-realtime";
 import { Badge } from "@/components/ui/badge";
@@ -99,6 +99,13 @@ export default function Topbar({ onMenuClick, admin }) {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  // Clicking a notification marks it read and, when it carries a deep-link
+  // (e.g. /vendors/<id>), navigates to that entity.
+  const handleNotificationClick = (n) => {
+    markAsRead(n.id);
+    if (n.link) router.push(n.link);
   };
 
   const markAllAsRead = async () => {
@@ -201,13 +208,13 @@ export default function Topbar({ onMenuClick, admin }) {
             <div className="max-h-[400px] overflow-y-auto">
               {notifications.length > 0 ? (
                 notifications.map((n) => (
-                  <DropdownMenuItem 
-                    key={n.id} 
+                  <DropdownMenuItem
+                    key={n.id}
                     className={cn(
                       "p-4 flex gap-4 cursor-pointer focus:bg-zinc-50 border-b border-zinc-50 transition-colors",
                       !n.isRead && "bg-swiggy-orange/[0.02]"
                     )}
-                    onClick={() => markAsRead(n.id)}
+                    onClick={() => handleNotificationClick(n)}
                   >
                     <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", getColorForType(n.type))}>
                       {(() => {
@@ -215,7 +222,7 @@ export default function Topbar({ onMenuClick, admin }) {
                         return <Icon className="w-5 h-5" />;
                       })()}
                     </div>
-                    <div className="flex-1 space-y-1">
+                    <div className="flex-1 space-y-1 min-w-0">
                       <div className="flex items-center justify-between">
                         <p className={cn("text-xs font-bold uppercase tracking-tight", n.isRead ? "text-zinc-400" : "text-swiggy-navy")}>
                           {n.title}
@@ -226,9 +233,14 @@ export default function Topbar({ onMenuClick, admin }) {
                         {n.description}
                       </p>
                     </div>
-                    {!n.isRead && (
-                      <div className="w-2 h-2 rounded-full bg-swiggy-orange flex-shrink-0 mt-2" />
-                    )}
+                    <div className="flex flex-col items-center justify-center gap-2 flex-shrink-0">
+                      {!n.isRead && (
+                        <div className="w-2 h-2 rounded-full bg-swiggy-orange" />
+                      )}
+                      {n.link && (
+                        <ChevronRight className="w-4 h-4 text-zinc-300" />
+                      )}
+                    </div>
                   </DropdownMenuItem>
                 ))
               ) : (

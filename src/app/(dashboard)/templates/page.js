@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Plus, Edit, Trash2, CheckCircle2, ChevronDown, ChevronRight, Package, ArrowLeft } from "lucide-react";
+import { Plus, Edit, Trash2, CheckCircle2, ChevronDown, ChevronRight, Package, ArrowLeft, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -32,12 +32,24 @@ export default function TemplatesPage() {
   
   const { data: vendors } = useRealtime("/api/vendors");
 
+  // Admin-managed business categories for the template category dropdown.
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/categories?active=1")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => { if (active) setCategoryOptions(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const [isTemplateModalOpen, setIsTemplateModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState(null);
   
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
   const [assigningTemplate, setAssigningTemplate] = useState(null);
   const [selectedVendors, setSelectedVendors] = useState([]);
+  const [assignSearch, setAssignSearch] = useState("");
 
   // For the builder inside the modal
   const [templateName, setTemplateName] = useState("");
@@ -77,7 +89,15 @@ export default function TemplatesPage() {
     setTemplateName(template.name);
     setTemplateCategory(template.category || "");
     setTemplateDescription(template.description || "");
-    setGroups(template.byo_template_groups || []);
+    setGroups((template.byo_template_groups || []).map(g => ({
+      ...g,
+      options: (g.byo_template_options || []).map(o => ({
+        id: o.id,
+        name: o.name,
+        price_modifier: o.price_modifier ?? "",
+        is_available: o.is_available !== false,
+      })),
+    })));
     setIsTemplateModalOpen(true);
   };
 
@@ -85,18 +105,20 @@ export default function TemplatesPage() {
     setAssigningTemplate(template);
     const assignedIds = template.vendor_assigned_templates?.map(a => a.vendors?.id) || [];
     setSelectedVendors(assignedIds);
+    setAssignSearch("");
     setIsAssignModalOpen(true);
   };
 
   const handleAddGroup = () => {
-    setGroups([...groups, { 
-      id: Date.now().toString(), 
-      name: "", 
-      selection_type: "SINGLE", 
-      is_required: false, 
+    setGroups([...groups, {
+      id: Date.now().toString(),
+      name: "",
+      selection_type: "SINGLE",
+      is_required: false,
       max_limit: null,
       free_threshold: 0,
-      extra_price: 0
+      extra_price: 0,
+      options: []
     }]);
   };
 
@@ -109,6 +131,26 @@ export default function TemplatesPage() {
   const removeGroup = (index) => {
     const newGroups = [...groups];
     newGroups.splice(index, 1);
+    setGroups(newGroups);
+  };
+
+  // Options within a template group (the actual choices, e.g. Cheese / Lettuce)
+  const addOption = (groupIndex) => {
+    const newGroups = [...groups];
+    if (!newGroups[groupIndex].options) newGroups[groupIndex].options = [];
+    newGroups[groupIndex].options.push({ id: `${Date.now()}-${Math.round(performance.now())}`, name: "", price_modifier: "", is_available: true });
+    setGroups(newGroups);
+  };
+
+  const updateOption = (groupIndex, optIndex, field, value) => {
+    const newGroups = [...groups];
+    newGroups[groupIndex].options[optIndex][field] = value;
+    setGroups(newGroups);
+  };
+
+  const removeOption = (groupIndex, optIndex) => {
+    const newGroups = [...groups];
+    newGroups[groupIndex].options.splice(optIndex, 1);
     setGroups(newGroups);
   };
 
@@ -129,7 +171,13 @@ export default function TemplatesPage() {
           max_limit: g.max_limit ? Number(g.max_limit) : null,
           free_threshold: g.free_threshold ? Number(g.free_threshold) : 0,
           extra_price: g.extra_price ? Number(g.extra_price) : 0,
-          display_order: i
+          display_order: i,
+          options: (g.options || []).map((o, oi) => ({
+            name: o.name,
+            price_modifier: Number(o.price_modifier) || 0,
+            is_available: o.is_available !== false,
+            display_order: oi,
+          }))
         }))
       };
 
@@ -187,6 +235,17 @@ export default function TemplatesPage() {
       toast.error(err.message);
     }
   };
+
+  // Only approved/active vendors are assignable; filter further by the search box.
+  const assignQuery = assignSearch.trim().toLowerCase();
+  const assignableVendors = (vendors || [])
+    .filter((v) => ["APPROVED", "ACTIVE"].includes(v.status))
+    .filter(
+      (v) =>
+        !assignQuery ||
+        (v.businessName || "").toLowerCase().includes(assignQuery) ||
+        (v.ownerName || "").toLowerCase().includes(assignQuery)
+    );
 
   if (loading) {
     return (
@@ -287,7 +346,24 @@ export default function TemplatesPage() {
               </div>
               <div className="space-y-2">
                 <Label className="text-[10px] font-black uppercase tracking-widest text-swiggy-gray">Category</Label>
-                <Input value={templateCategory} onChange={(e) => setTemplateCategory(e.target.value)} placeholder="e.g. Fast Food" className="h-10 sm:h-11 rounded-xl" />
+                <Select value={templateCategory} onValueChange={setTemplateCategory}>
+                  <SelectTrigger className="h-10 sm:h-11 rounded-xl font-bold text-sm">
+                    <SelectValue placeholder="Select Category" />
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    {(() => {
+                      const names = categoryOptions.map((c) => c.name);
+                      // Keep the template's current category selectable even if it was
+                      // since disabled or predates the managed list.
+                      if (templateCategory && !names.includes(templateCategory)) {
+                        names.unshift(templateCategory);
+                      }
+                      return names.length === 0
+                        ? <SelectItem value="General">General</SelectItem>
+                        : names.map((name) => <SelectItem key={name} value={name}>{name}</SelectItem>);
+                    })()}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -327,19 +403,43 @@ export default function TemplatesPage() {
                           <SelectTrigger className="bg-white h-9 text-sm rounded-lg"><SelectValue /></SelectTrigger>
                           <SelectContent className="rounded-xl">
                             <SelectItem value="SINGLE" className="text-xs font-bold">Single Select</SelectItem>
-                            <SelectItem value="MULTI" className="text-xs font-bold">Multi Select</SelectItem>
+                            <SelectItem value="MULTIPLE" className="text-xs font-bold">Multi Select</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       <div className="flex items-center gap-2 mt-1 sm:col-span-2">
-                        <input 
-                          type="checkbox" 
-                          id={`req-${index}`} 
-                          checked={group.is_required} 
-                          onChange={(e) => updateGroup(index, 'is_required', e.target.checked)} 
-                          className="w-4 h-4 rounded border-zinc-300 text-swiggy-orange focus:ring-swiggy-orange" 
+                        <input
+                          type="checkbox"
+                          id={`req-${index}`}
+                          checked={group.is_required}
+                          onChange={(e) => updateGroup(index, 'is_required', e.target.checked)}
+                          className="w-4 h-4 rounded border-zinc-300 text-swiggy-orange focus:ring-swiggy-orange"
                         />
                         <Label htmlFor={`req-${index}`} className="text-xs font-bold cursor-pointer text-zinc-600">Required Selection</Label>
+                      </div>
+                    </div>
+
+                    {/* Options inside this group — the actual choices the customer picks */}
+                    <div className="mt-4 bg-white rounded-xl border border-zinc-100 p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="text-[9px] font-black uppercase tracking-widest text-zinc-400">Options</Label>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => addOption(index)} className="h-6 text-[10px] font-black text-swiggy-orange hover:bg-orange-50 uppercase tracking-widest">
+                          <Plus className="w-3 h-3 mr-1" /> Add Option
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        {(group.options || []).map((opt, oIdx) => (
+                          <div key={opt.id || oIdx} className="flex items-center gap-2">
+                            <Input value={opt.name} onChange={(e) => updateOption(index, oIdx, 'name', e.target.value)} placeholder="Option name (e.g. Cheese)" className="h-8 text-xs bg-white flex-1 rounded-lg" />
+                            <Input type="number" value={opt.price_modifier} onChange={(e) => updateOption(index, oIdx, 'price_modifier', e.target.value)} placeholder="+₹" className="h-8 text-xs bg-white w-20 rounded-lg" />
+                            <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600 shrink-0" onClick={() => removeOption(index, oIdx)}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        ))}
+                        {(group.options || []).length === 0 && (
+                          <p className="text-[10px] text-zinc-400 font-medium italic">No options yet — add the choices customers can pick.</p>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -368,17 +468,30 @@ export default function TemplatesPage() {
               Enable for specific vendors
             </DialogDescription>
           </DialogHeader>
-          <div className="p-4 sm:p-6 space-y-3 max-h-[50vh] overflow-y-auto pr-2">
-            {vendors?.length > 0 ? vendors.map(vendor => (
+          <div className="px-4 sm:px-6 pt-4 shrink-0">
+            <div className="flex items-center justify-between mb-2">
+              <Input
+                value={assignSearch}
+                onChange={(e) => setAssignSearch(e.target.value)}
+                placeholder="Search approved vendors..."
+                className="h-10 rounded-xl text-sm font-bold"
+              />
+            </div>
+            <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">
+              {selectedVendors.length} selected · {assignableVendors.length} shown
+            </p>
+          </div>
+          <div className="p-4 sm:p-6 pt-3 space-y-3 max-h-[50vh] overflow-y-auto pr-2">
+            {assignableVendors.length > 0 ? assignableVendors.map(vendor => (
               <label key={vendor.id} className="flex items-center gap-4 p-4 rounded-2xl border border-zinc-100 hover:bg-zinc-50 cursor-pointer transition-all group">
-                <input 
-                  type="checkbox" 
+                <input
+                  type="checkbox"
                   checked={selectedVendors.includes(vendor.id)}
                   onChange={(e) => {
                     if (e.target.checked) setSelectedVendors([...selectedVendors, vendor.id]);
                     else setSelectedVendors(selectedVendors.filter(id => id !== vendor.id));
                   }}
-                  className="w-5 h-5 rounded-md border-zinc-300 text-swiggy-orange focus:ring-swiggy-orange" 
+                  className="w-5 h-5 rounded-md border-zinc-300 text-swiggy-orange focus:ring-swiggy-orange"
                 />
                 <div className="flex flex-col">
                   <span className="font-black text-swiggy-navy group-hover:text-swiggy-orange transition-colors">{vendor.businessName}</span>
@@ -388,7 +501,7 @@ export default function TemplatesPage() {
             )) : (
               <div className="text-center py-10 opacity-20">
                  <Users className="w-12 h-12 mx-auto mb-2" />
-                 <p className="text-sm font-black uppercase tracking-tighter">No vendors available</p>
+                 <p className="text-sm font-black uppercase tracking-tighter">{assignQuery ? "No matching vendors" : "No approved vendors"}</p>
               </div>
             )}
           </div>

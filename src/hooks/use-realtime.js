@@ -100,7 +100,16 @@ export function useRealtime(apiUrl, options = {}) {
         setConnected(true);
       }
     } catch (err) {
-      console.error(`[Realtime Polling Error - ${apiUrl}]:`, err);
+      // A network-level failure rejects fetch() with a TypeError ("Failed to fetch") —
+      // e.g. the dev server hot-reloading, a brief offline, or a request interrupted by
+      // navigation. For a polling hook this is transient and self-heals on the next tick,
+      // so downgrade it to a warning instead of a console.error that trips the dev error
+      // overlay / Sentry every blip. Genuine (non-network) errors are still logged loudly.
+      if (err instanceof TypeError) {
+        console.warn(`[Realtime] Transient network error polling ${apiUrl}; will retry.`);
+      } else {
+        console.error(`[Realtime Polling Error - ${apiUrl}]:`, err);
+      }
       setConnected(false);
     }
   }, [apiUrl, patchKey, toastConfig, onDataUpdate]);
