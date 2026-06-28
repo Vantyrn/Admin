@@ -26,7 +26,8 @@ export async function GET() {
       time: p.created_at,
       description: p.description || "",
       imageUrl: p.product_images?.[0]?.url || "",
-      is_customizable: p.is_customizable || (p.product_addons?.length > 0)
+      is_customizable: p.is_customizable || (p.product_addons?.length > 0),
+      isActive: p.is_active !== false
     }));
 
     return NextResponse.json(mappedProducts);
@@ -142,7 +143,7 @@ export async function POST(request) {
 export async function PATCH(request) {
   try {
     const body = await request.json();
-    const { id, status, name, base_price, category, product_type, description, imageUrl, is_customizable } = body;
+    const { id, status, name, base_price, category, product_type, description, imageUrl, is_customizable, is_active } = body;
 
     if (!id) {
       return NextResponse.json({ error: "Missing product ID" }, { status: 400 });
@@ -156,6 +157,14 @@ export async function PATCH(request) {
     if (product_type) data.product_type = product_type;
     if (description !== undefined) data.description = description;
     if (is_customizable !== undefined) data.is_customizable = is_customizable;
+    // Admin enable/disable switch — hide/show the product without changing its review_status.
+    if (is_active !== undefined) data.is_active = Boolean(is_active);
+    // Approving a product makes it LIVE: all new products are created pending_review +
+    // inactive, so approval must also activate it (unless is_active was explicitly set in
+    // the same request) — otherwise an approved product would stay hidden from customers.
+    if (status && status.toLowerCase() === "approved" && is_active === undefined) {
+      data.is_active = true;
+    }
 
     if (imageUrl) {
       // Upsert the first image or create a new one

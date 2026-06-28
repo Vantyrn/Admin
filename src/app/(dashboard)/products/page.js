@@ -4,10 +4,11 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useRealtime } from "@/hooks/use-realtime";
 import { Skeleton } from "@/components/ui/skeleton";
 import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Eye, 
+  Plus,
+  Search,
+  Filter,
+  Eye,
+  EyeOff,
   Package,
   Edit,
   Trash2,
@@ -242,6 +243,20 @@ export default function ProductsPage() {
     }
   };
 
+  const handleToggleActive = async (product) => {
+    try {
+      const res = await fetch("/api/products", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: product.id, is_active: !product.isActive })
+      });
+      if (!res.ok) throw new Error("Failed to update product");
+      toast.success(product.isActive ? "Product disabled — hidden from customers." : "Product enabled.");
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
   const handleReject = async (id) => {
     try {
       const res = await fetch("/api/products", {
@@ -414,6 +429,9 @@ export default function ProductsPage() {
               {row.original.is_customizable && (
                 <Badge variant="outline" className="text-[9px] h-4 px-1 py-0 border-swiggy-orange text-swiggy-orange bg-orange-50">Customizable</Badge>
               )}
+              {row.original.isActive === false && (
+                <Badge variant="outline" className="text-[9px] h-4 px-1 py-0 border-zinc-300 text-zinc-500 bg-zinc-100">Disabled</Badge>
+              )}
             </span>
             {row.original.description && (
               <span className="text-xs text-zinc-500 line-clamp-1 max-w-[200px]" title={row.original.description}>
@@ -504,6 +522,13 @@ export default function ProductsPage() {
               }}>
                 <Edit className="w-4 h-4 mr-2" />
                 Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleToggleActive(row.original)}>
+                {row.original.isActive === false ? (
+                  <><Eye className="w-4 h-4 mr-2" /> Enable</>
+                ) : (
+                  <><EyeOff className="w-4 h-4 mr-2" /> Disable (hide)</>
+                )}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-red-600 focus:text-red-600 focus:bg-red-50" onClick={() => {

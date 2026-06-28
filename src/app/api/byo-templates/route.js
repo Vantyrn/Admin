@@ -13,13 +13,14 @@ export async function GET() {
             byo_template_options: { orderBy: { display_order: 'asc' } }
           }
         },
+        vendors: { select: { id: true, business_name: true } }, // owner (vendor-authored)
         vendor_assigned_templates: {
           include: {
             vendors: { select: { id: true, business_name: true } }
           }
         }
       },
-      orderBy: { created_at: 'desc' }
+      orderBy: [{ status: 'asc' }, { created_at: 'desc' }]
     });
     return NextResponse.json(templates);
   } catch (error) {
@@ -37,11 +38,9 @@ export async function POST(request) {
       return NextResponse.json({ error: "Template name is required" }, { status: 400 });
     }
 
-    // Fetch all active vendors to auto-assign the template to everyone
-    const allVendors = await prisma.vendors.findMany({
-      select: { id: true }
-    });
-
+    // An admin-created template is assigned to NO ONE by default — the admin explicitly
+    // assigns it to the relevant vendors afterwards (via the Assign action). (Previously
+    // this auto-assigned to every vendor, which is not wanted.)
     const template = await prisma.byo_templates.create({
       data: {
         name,
@@ -65,11 +64,6 @@ export async function POST(request) {
                 image_url: o.image_url || null,
               }))
             }
-          }))
-        },
-        vendor_assigned_templates: {
-          create: allVendors.map(v => ({
-            vendor_id: v.id
           }))
         }
       },

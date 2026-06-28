@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Plus, Edit, Trash2, CheckCircle2, ChevronDown, ChevronRight, Package, ArrowLeft, Users } from "lucide-react";
+import { Plus, Edit, Trash2, CheckCircle2, XCircle, Eye, EyeOff, ChevronDown, ChevronRight, Package, ArrowLeft, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -236,6 +236,31 @@ export default function TemplatesPage() {
     }
   };
 
+  // Approve / reject / enable / disable a (vendor-authored) template.
+  const moderateTemplate = async (id, payload, successMsg) => {
+    try {
+      const res = await fetch(`/api/byo-templates/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error((await res.json()).error || "Action failed");
+      toast.success(successMsg);
+      fetchTemplates();
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const approveTemplate = (t) => moderateTemplate(t.id, { status: "approved", isActive: true, rejectionReason: null }, "Template approved");
+  const rejectTemplate = (t) => {
+    const reason = window.prompt("Reason for rejecting this template (shown to the vendor):", "");
+    if (reason === null) return;
+    moderateTemplate(t.id, { status: "rejected", rejectionReason: reason || "Not specified" }, "Template rejected");
+  };
+  const toggleTemplateActive = (t) =>
+    moderateTemplate(t.id, { isActive: !t.is_active }, t.is_active ? "Template disabled" : "Template enabled");
+
   // Only approved/active vendors are assignable; filter further by the search box.
   const assignQuery = assignSearch.trim().toLowerCase();
   const assignableVendors = (vendors || [])
@@ -282,9 +307,31 @@ export default function TemplatesPage() {
         {templates.map(template => (
           <div key={template.id} className="bg-white dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800 rounded-2xl sm:rounded-3xl p-5 sm:p-6 shadow-sm flex flex-col hover:border-swiggy-orange/30 transition-colors">
             <div className="flex justify-between items-start mb-4">
-              <div>
-                <h3 className="text-lg sm:text-xl font-black text-swiggy-navy">{template.name}</h3>
-                <Badge variant="secondary" className="mt-1 font-bold text-[9px] sm:text-[10px] uppercase tracking-wider">{template.category || "General"}</Badge>
+              <div className="min-w-0">
+                <h3 className="text-lg sm:text-xl font-black text-swiggy-navy truncate">{template.name}</h3>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                  <Badge variant="secondary" className="font-bold text-[9px] sm:text-[10px] uppercase tracking-wider">{template.category || "General"}</Badge>
+                  {template.vendors ? (
+                    <Badge className="bg-indigo-50 text-indigo-600 border-indigo-100 font-bold text-[9px] uppercase tracking-wider">By {template.vendors.business_name}</Badge>
+                  ) : (
+                    <Badge className="bg-zinc-100 text-zinc-500 border-zinc-200 font-bold text-[9px] uppercase tracking-wider">Admin</Badge>
+                  )}
+                  {template.status === "pending_review" && (
+                    <Badge className="bg-amber-100 text-amber-700 border-amber-200 font-bold text-[9px] uppercase tracking-wider">Pending Review</Badge>
+                  )}
+                  {template.status === "approved" && template.vendors && (
+                    <Badge className="bg-green-100 text-green-700 border-green-200 font-bold text-[9px] uppercase tracking-wider">Approved</Badge>
+                  )}
+                  {template.status === "rejected" && (
+                    <Badge className="bg-red-100 text-red-700 border-red-200 font-bold text-[9px] uppercase tracking-wider">Rejected</Badge>
+                  )}
+                  {template.is_active === false && (
+                    <Badge className="bg-zinc-200 text-zinc-600 border-zinc-300 font-bold text-[9px] uppercase tracking-wider">Disabled</Badge>
+                  )}
+                </div>
+                {template.status === "rejected" && template.rejection_reason && (
+                  <p className="text-[10px] text-red-500 font-medium mt-1.5">Reason: {template.rejection_reason}</p>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="icon" className="h-8 w-8 text-swiggy-orange hover:bg-orange-50" onClick={() => openEditModal(template)}>
@@ -309,7 +356,28 @@ export default function TemplatesPage() {
               )}
             </div>
 
-            <div className="mt-auto pt-4 border-t border-zinc-100">
+            <div className="mt-auto pt-4 border-t border-zinc-100 space-y-3">
+              {/* Moderation actions. Approve/Reject apply only to vendor-authored templates
+                  awaiting review; Enable/Disable applies to EVERY template (admin-created and
+                  approved vendor-created alike). */}
+              <div className="flex flex-wrap items-center gap-2">
+                {template.vendors && (template.status === "pending_review" || template.status === "rejected") ? (
+                  <>
+                    <Button size="sm" className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold text-[10px] sm:text-xs h-8" onClick={() => approveTemplate(template)}>
+                      <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Approve
+                    </Button>
+                    {template.status !== "rejected" && (
+                      <Button size="sm" variant="outline" className="flex-1 text-red-500 border-red-100 hover:bg-red-50 font-bold text-[10px] sm:text-xs h-8" onClick={() => rejectTemplate(template)}>
+                        <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <Button size="sm" variant="outline" className={`flex-1 font-bold text-[10px] sm:text-xs h-8 ${template.is_active ? "text-amber-600 border-amber-100 hover:bg-amber-50" : "text-green-600 border-green-100 hover:bg-green-50"}`} onClick={() => toggleTemplateActive(template)}>
+                    {template.is_active ? <><EyeOff className="w-3.5 h-3.5 mr-1" /> Disable</> : <><Eye className="w-3.5 h-3.5 mr-1" /> Enable</>}
+                  </Button>
+                )}
+              </div>
               <div className="flex items-center justify-between gap-2">
                 <div className="text-xs sm:text-sm font-medium text-zinc-600">
                   Assigned to <strong className="text-swiggy-navy">{template.vendor_assigned_templates?.length || 0}</strong> vendors

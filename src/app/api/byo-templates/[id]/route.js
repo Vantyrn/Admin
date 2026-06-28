@@ -30,12 +30,16 @@ export async function PATCH(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, category, description, groups } = body;
+    const { name, category, description, groups, status, isActive, rejectionReason } = body;
 
     const updateData = {};
     if (name) updateData.name = name;
     if (category !== undefined) updateData.category = category;
     if (description !== undefined) updateData.description = description;
+    // Moderation: approve / reject / enable / disable a (vendor-authored) template.
+    if (status !== undefined) updateData.status = status;
+    if (isActive !== undefined) updateData.is_active = Boolean(isActive);
+    if (rejectionReason !== undefined) updateData.rejection_reason = rejectionReason;
 
     // Replace groups (+ their options) when provided. Products snapshot their own
     // copy of a template's groups/options, so recreating the template is safe and

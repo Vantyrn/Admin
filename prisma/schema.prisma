@@ -801,6 +801,7 @@ model vendors {
   shadowfax_linked           Boolean                      @default(false)
   phone_verified             Boolean                      @default(false)
   orders                     orders[]
+  byo_templates              byo_templates[]
   categories                 categories[]
   product_review_submissions product_review_submissions[]
   product_templates          product_templates[]
@@ -928,8 +929,16 @@ model byo_templates {
   created_at                DateTime                    @default(now()) @db.Timestamptz(6)
   updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
   description               String?
+  // Ownership + approval. vendor_id null = admin-authored (auto-approved). A
+  // vendor-authored template starts 'pending_review' and is only usable once
+  // 'approved' AND is_active. is_active is the admin on/off switch (disable).
+  vendor_id                 String?                     @db.Uuid
+  status                    String                      @default("approved") @db.VarChar(30)
+  rejection_reason          String?
+  is_active                 Boolean                     @default(true)
   byo_template_groups       byo_template_groups[]
   vendor_assigned_templates vendor_assigned_templates[]
+  vendors                   vendors?                    @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
 
   @@schema("vendor_delivery")
 }
