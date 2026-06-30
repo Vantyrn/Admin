@@ -17,7 +17,8 @@ import {
   PackagePlus,
   Bell,
   Settings,
-  Tags
+  Tags,
+  Banknote
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -29,6 +30,7 @@ const navItems = [
   { name: "Products", icon: Package, href: "/products" },
   { name: "Customers", icon: Users, href: "/customers" },
   { name: "Orders", icon: Receipt, href: "/orders" },
+  { name: "Reconciliation", icon: Banknote, href: "/payments/reconciliation" },
   { name: "Notifications", icon: Bell, href: "/notifications" },
   { name: "Reports", icon: BarChart3, href: "/reports" },
 ];
