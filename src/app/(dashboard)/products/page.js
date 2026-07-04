@@ -754,7 +754,7 @@ export default function ProductsPage() {
                                   <div className="space-y-2">
                                     {group.options.map((opt, oIdx) => (
                                       <div key={opt.id} className="flex items-start gap-2 bg-white p-2 border border-zinc-100 rounded-lg">
-                                        <div className="flex-1 grid grid-cols-2 gap-2">
+                                        <div className="flex-1 grid grid-cols-1 xs:grid-cols-2 gap-2">
                                           <Input placeholder="Item Name (e.g. Cheese)" value={opt.name} onChange={(e) => updateOption(gIdx, oIdx, 'name', e.target.value)} className="h-8 text-sm" />
                                           <Input type="number" placeholder="Price (₹)" value={opt.price_modifier} onChange={(e) => updateOption(gIdx, oIdx, 'price_modifier', e.target.value)} className="h-8 text-sm" />
                                         </div>
@@ -797,7 +797,7 @@ export default function ProductsPage() {
                           <div className="space-y-2">
                             {addOns.map((a, idx) => (
                               <div key={a.id} className="flex items-end gap-2 bg-zinc-50 border border-zinc-200 rounded-lg p-2">
-                                <div className="flex-1 grid grid-cols-3 gap-2">
+                                <div className="flex-1 grid grid-cols-1 xs:grid-cols-3 gap-2">
                                   <div className="space-y-1">
                                     <Label className="text-[9px] font-black uppercase text-zinc-400">Name</Label>
                                     <Input value={a.name} onChange={(e) => updateAddon(idx, 'name', e.target.value)} placeholder="Extra Cheese" className="h-8 text-sm bg-white" />
@@ -901,7 +901,7 @@ export default function ProductsPage() {
                               <div className="space-y-2">
                                 {group.options.map((opt, oIdx) => (
                                   <div key={opt.id} className="flex items-start gap-2">
-                                    <div className="flex-1 grid grid-cols-2 gap-2">
+                                    <div className="flex-1 grid grid-cols-1 xs:grid-cols-2 gap-2">
                                       <Input placeholder="Item Name" value={opt.name} onChange={(e) => updateOption(gIdx, oIdx, 'name', e.target.value)} className="h-8 text-xs" />
                                       <Input type="number" placeholder="Price (₹)" value={opt.price_modifier} onChange={(e) => updateOption(gIdx, oIdx, 'price_modifier', e.target.value)} className="h-8 text-xs" />
                                     </div>
