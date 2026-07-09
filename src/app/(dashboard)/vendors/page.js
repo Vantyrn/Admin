@@ -124,15 +124,6 @@ export default function VendorsPage() {
       header: "Phone",
     },
     {
-      accessorKey: "sfxStoreCode",
-      header: "SFX Code",
-      cell: ({ row }) => (
-        <Badge variant="outline" className="font-bold text-[10px] border-zinc-200 uppercase">
-          {row.original.sfxStoreCode || "N/A"}
-        </Badge>
-      )
-    },
-    {
       accessorKey: "category",
       header: "Category",
       cell: ({ row }) => (

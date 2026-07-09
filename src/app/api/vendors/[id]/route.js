@@ -105,8 +105,6 @@ export async function GET(request, { params }) {
         by: review.adminUser?.name || "System",
         date: review.reviewedAt.toLocaleString()
       })),
-      shadowfaxLinked: vendor.shadowfax_linked,
-      sfxStoreCode: vendor.sfx_store_code,
       adminActions: statusLogs.map(log => ({
         action: log.newStatus === log.oldStatus ? log.reason : `STATUS_CHANGED_${log.newStatus.toUpperCase()}`,
         oldStatus: log.oldStatus,
@@ -301,11 +299,8 @@ export async function PATCH(request, { params }) {
       newStatus = "REJECTED";
       kycDecision = "rejected";
     } else if (action === "APPROVE_VENDOR") {
-      // NOTE: Shadowfax store-code linkage is TEMPORARILY not required for approval
-      // (per product decision). Re-enable this gate before going live with real delivery.
-      // if (!vendor.sfx_store_code || !vendor.shadowfax_linked) {
-      //   return NextResponse.json({ error: "Vendor cannot be approved without Shadowfax integration." }, { status: 400 });
-      // }
+      // ponytail: no Shadowfax gate. The HL Marketplace model has no per-vendor store code —
+      // outlet onboarding is a one-time account-level activity and pickup/drop go per-order.
       newStatus = "ACTIVE";
     } else if (action === "REJECT_VENDOR") {
       newStatus = "REJECTED";

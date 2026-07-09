@@ -243,16 +243,8 @@ export default function VendorDetailPage() {
     }
   };
 
-  const [sfxCode, setSfxCode] = useState("");
-  const [isLinking, setIsLinking] = useState(false);
   const [earningsData, setEarningsData] = useState(null);
   const [loadingEarnings, setLoadingEarnings] = useState(false);
-
-  useEffect(() => {
-    if (vendor) {
-      setSfxCode(vendor.sfxStoreCode || "");
-    }
-  }, [vendor]);
 
   useEffect(() => {
     if (activeTab === "earnings" && !earningsData) {
@@ -382,24 +374,6 @@ export default function VendorDetailPage() {
 
 
 
-  const handleLinkShadowfax = async () => {
-    if (!sfxCode) return toast.error("Please enter a Shadowfax Store Code");
-    setIsLinking(true);
-    try {
-      const res = await fetch(`/api/vendors/${vendorId}/shadowfax`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sfxStoreCode: sfxCode })
-      });
-      if (!res.ok) throw new Error("Failed to link Shadowfax Store Code");
-      toast.success("Shadowfax Delivery ID linked successfully");
-    } catch (error) {
-      toast.error(error.message);
-    } finally {
-      setIsLinking(false);
-    }
-  };
-
   const handleApproveVendor = async () => {
     try {
       const res = await fetch(`/api/vendors/${vendorId}`, {
@@ -409,7 +383,7 @@ export default function VendorDetailPage() {
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Failed to approve vendor");
+        throw new Error(err.message || err.error || "Failed to approve vendor");
       }
       toast.success("Vendor approved successfully and is now ACTIVE");
       mutate();
@@ -631,69 +605,7 @@ export default function VendorDetailPage() {
           </div>
 
           <div className="space-y-6">
-            {/* 2. Delivery Integration Card */}
-            <Card className="rounded-[2.5rem] border-zinc-100 shadow-xl overflow-hidden group hover:shadow-2xl transition-all duration-500">
-               <CardHeader className="p-8 border-b border-zinc-50 bg-swiggy-navy relative overflow-hidden">
-                 <div className="absolute top-0 right-0 w-32 h-32 bg-swiggy-orange/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
-                 <CardTitle className="text-xl font-black text-white inline-flex items-center gap-3 relative z-10">
-                   <div className="w-10 h-10 bg-swiggy-orange/20 rounded-xl flex items-center justify-center border border-swiggy-orange/30">
-                     <Store className="w-5 h-5 text-swiggy-orange" />
-                   </div>
-                   Shadowfax Delivery Integration
-                 </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8 space-y-8">
-                 <div className="space-y-4">
-                   <div className="flex flex-col gap-2">
-                     <Label className="text-xs font-black uppercase tracking-[0.15em] text-swiggy-gray ml-1">Shadowfax Store Code</Label>
-                     <div className="flex flex-col gap-4">
-                        <input 
-                          type="text"
-                          value={sfxCode}
-                          onChange={(e) => setSfxCode(e.target.value)}
-                          className="w-full h-14 rounded-2xl border-2 border-zinc-100 bg-zinc-50/50 px-6 font-black text-lg text-swiggy-navy focus:border-swiggy-orange focus:bg-white outline-none transition-all uppercase placeholder:text-zinc-300"
-                          placeholder="SFX1234545"
-                        />
-                        <Button 
-                          className="w-full h-14 bg-swiggy-orange hover:bg-swiggy-orange/90 text-white font-black px-8 rounded-2xl shadow-lg shadow-swiggy-orange/20 group transition-all duration-300"
-                          onClick={handleLinkShadowfax}
-                          disabled={isLinking}
-                        >
-                          {isLinking ? (
-                            <span className="flex items-center gap-2">
-                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              Linking Store...
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-2">
-                              Update Store ID
-                              <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                            </span>
-                          )}
-                        </Button>
-                     </div>
-                   </div>
-                 </div>
-
-                 <div className="pt-8 border-t border-zinc-100 flex items-center justify-between">
-                   <div className="flex flex-col gap-1">
-                     <span className="text-xs font-black uppercase tracking-widest text-swiggy-navy">Integration Status</span>
-                     <p className="text-[10px] font-bold text-swiggy-gray uppercase">Last checked: Today at 2:45 PM</p>
-                   </div>
-                   {vendor.shadowfaxLinked ? (
-                     <Badge className="h-10 px-6 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100 font-black text-xs uppercase tracking-widest shadow-sm">
-                       Linked
-                     </Badge>
-                   ) : (
-                     <Badge className="h-10 px-6 rounded-full bg-zinc-50 text-zinc-400 border border-zinc-100 font-black text-xs uppercase tracking-widest">
-                       Not Linked
-                     </Badge>
-                   )}
-                 </div>
-               </CardContent>
-            </Card>
-
-            {/* 3. Approval Action Card */}
+            {/* Approval Action Card */}
             <Card className="rounded-3xl border-zinc-100 shadow-sm overflow-hidden">
                <CardHeader className="p-8 border-b border-zinc-50 bg-swiggy-navy">
                  <CardTitle className="text-lg font-black text-white inline-flex items-center gap-2">
@@ -701,15 +613,6 @@ export default function VendorDetailPage() {
                  </CardTitle>
                </CardHeader>
                <CardContent className="p-8 space-y-4">
-                 {!vendor.shadowfaxLinked && (
-                   <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex gap-3 items-start mb-2">
-                     <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                     <p className="text-xs font-bold text-amber-900 leading-relaxed">
-                       Shadowfax Store Code isn&apos;t linked. Recommended before real delivery, but not required to approve.
-                     </p>
-                   </div>
-                 )}
-
                  <Button
                    className={`w-full h-14 font-black uppercase tracking-widest rounded-2xl gap-3 shadow-lg ${
                      vendor.status === 'ACTIVE'
