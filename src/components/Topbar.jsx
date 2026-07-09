@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Bell, Search, User, Menu, ShoppingBag, UserPlus, Info, Check } from "lucide-react";
+import { Bell, Search, User, Menu, ShoppingBag, UserPlus, Info, Check, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { useRealtime } from "@/hooks/use-realtime";
 import { Badge } from "@/components/ui/badge";
@@ -45,10 +45,22 @@ const getColorForType = (type) => {
   }
 };
 
-export default function Topbar({ onMenuClick }) {
+// Derives up-to-two-letter initials from the admin's name for the avatar fallback.
+const getInitials = (name) => {
+  if (!name) return "AD";
+  const parts = name.trim().split(/\s+/);
+  const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : parts[0].slice(0, 2);
+  return letters.toUpperCase();
+};
+
+export default function Topbar({ onMenuClick, admin }) {
   const pathname = usePathname();
   const router = useRouter();
   const pageTitle = routeTitles[pathname] || "Admin Panel";
+
+  const adminName = admin?.name || "Admin";
+  const firstName = adminName.split(/\s+/)[0];
+  const adminInitials = getInitials(admin?.name);
 
   const handleLogout = async () => {
     try {
@@ -66,7 +78,7 @@ export default function Topbar({ onMenuClick }) {
   };
   
   const { data, loading, mutate } = useRealtime("/api/notifications", {
-    interval: 1000,
+    interval: 30000, // 30s — was 1s, which hammered the API and risked rate limits
     toastConfig: {
       new: (n) => n.title,
       description: (n) => n.description
@@ -87,6 +99,13 @@ export default function Topbar({ onMenuClick }) {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  // Clicking a notification marks it read and, when it carries a deep-link
+  // (e.g. /vendors/<id>), navigates to that entity.
+  const handleNotificationClick = (n) => {
+    markAsRead(n.id);
+    if (n.link) router.push(n.link);
   };
 
   const markAllAsRead = async () => {
@@ -136,7 +155,7 @@ export default function Topbar({ onMenuClick }) {
           {pageTitle}
         </h1>
         <p className="text-[8px] sm:text-xs font-semibold text-swiggy-gray uppercase tracking-widest mt-0.5 sm:mt-1 truncate">
-          Welcome back, Admin
+          Welcome back, {firstName}
         </p>
       </div>
 
@@ -189,13 +208,13 @@ export default function Topbar({ onMenuClick }) {
             <div className="max-h-[400px] overflow-y-auto">
               {notifications.length > 0 ? (
                 notifications.map((n) => (
-                  <DropdownMenuItem 
-                    key={n.id} 
+                  <DropdownMenuItem
+                    key={n.id}
                     className={cn(
                       "p-4 flex gap-4 cursor-pointer focus:bg-zinc-50 border-b border-zinc-50 transition-colors",
                       !n.isRead && "bg-swiggy-orange/[0.02]"
                     )}
-                    onClick={() => markAsRead(n.id)}
+                    onClick={() => handleNotificationClick(n)}
                   >
                     <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0", getColorForType(n.type))}>
                       {(() => {
@@ -203,7 +222,7 @@ export default function Topbar({ onMenuClick }) {
                         return <Icon className="w-5 h-5" />;
                       })()}
                     </div>
-                    <div className="flex-1 space-y-1">
+                    <div className="flex-1 space-y-1 min-w-0">
                       <div className="flex items-center justify-between">
                         <p className={cn("text-xs font-bold uppercase tracking-tight", n.isRead ? "text-zinc-400" : "text-swiggy-navy")}>
                           {n.title}
@@ -214,9 +233,14 @@ export default function Topbar({ onMenuClick }) {
                         {n.description}
                       </p>
                     </div>
-                    {!n.isRead && (
-                      <div className="w-2 h-2 rounded-full bg-swiggy-orange flex-shrink-0 mt-2" />
-                    )}
+                    <div className="flex flex-col items-center justify-center gap-2 flex-shrink-0">
+                      {!n.isRead && (
+                        <div className="w-2 h-2 rounded-full bg-swiggy-orange" />
+                      )}
+                      {n.link && (
+                        <ChevronRight className="w-4 h-4 text-zinc-300" />
+                      )}
+                    </div>
                   </DropdownMenuItem>
                 ))
               ) : (
@@ -248,16 +272,21 @@ export default function Topbar({ onMenuClick }) {
             <div className="flex items-center gap-2 sm:gap-3 p-0.5 sm:p-1 sm:pr-3 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">
               <Avatar className="h-8 w-8 sm:h-10 sm:h-10 border-2 border-swiggy-orange/20">
                 <AvatarImage src="" />
-                <AvatarFallback className="bg-swiggy-orange/10 text-swiggy-orange font-semibold text-xs sm:text-sm">SY</AvatarFallback>
+                <AvatarFallback className="bg-swiggy-orange/10 text-swiggy-orange font-semibold text-xs sm:text-sm">{adminInitials}</AvatarFallback>
               </Avatar>
               <div className="hidden sm:block text-left">
-                <p className="text-sm font-bold text-swiggy-navy dark:text-white leading-none">Syed W.</p>
+                <p className="text-sm font-bold text-swiggy-navy dark:text-white leading-none">{adminName}</p>
                 <p className="text-[10px] font-semibold text-swiggy-gray uppercase tracking-widest mt-1">Admin</p>
               </div>
             </div>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 mt-2 p-2 rounded-xl">
-            <DropdownMenuLabel className="font-bold">My Account</DropdownMenuLabel>
+            <DropdownMenuLabel className="font-bold">
+              <p className="text-sm text-swiggy-navy dark:text-white truncate">{adminName}</p>
+              {admin?.email && (
+                <p className="text-[10px] font-medium text-swiggy-gray normal-case truncate">{admin.email}</p>
+              )}
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem className="rounded-lg gap-2 cursor-pointer font-medium">
               <User className="w-4 h-4" /> Profile Details

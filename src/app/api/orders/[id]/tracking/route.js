@@ -27,15 +27,36 @@ export async function GET(request, { params }) {
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    // Get latest tracking record
-    const latestTracking = await prisma.order_tracking.findFirst({
-      where: { order_id: orderId },
-      orderBy: { recorded_at: 'desc' }
-    });
+    // Rider telemetry comes from Shadowfax (real callbacks or the simulator), which writes to
+    // sfx_rider_location_log — NOT the legacy order_tracking table (nothing populates that).
+    const sfxOrder = await prisma.sfx_orders.findUnique({ where: { internal_order_id: orderId } });
+
+    let latestTracking = null;
+    let rider = null;
+    if (sfxOrder) {
+      latestTracking = await prisma.sfx_rider_location_log.findFirst({
+        where: { sfx_order_id: sfxOrder.sfx_order_id },
+        orderBy: { received_at: 'desc' }
+      });
+
+      // Rider identity: newest callback payload carrying rider fields.
+      const callbacks = await prisma.sfx_callbacks.findMany({
+        where: { sfx_order_id: sfxOrder.sfx_order_id },
+        orderBy: { received_at: 'desc' },
+        take: 25
+      });
+      for (const cb of callbacks) {
+        const p = cb.payload || {};
+        if (p.rider_name || p.rider_contact) {
+          rider = { name: p.rider_name || null, phone: p.rider_contact || p.rider_phone || null };
+          break;
+        }
+      }
+    }
 
     let customerLat = null;
     let customerLng = null;
-    
+
     // Attempt to extract lat/lng from address snapshot
     if (order.address_snapshot && typeof order.address_snapshot === 'object') {
       const snap = order.address_snapshot;
@@ -44,10 +65,12 @@ export async function GET(request, { params }) {
     }
 
     return NextResponse.json({
-      rider: latestTracking ? {
-        lat: parseFloat(latestTracking.latitude.toString()),
-        lng: parseFloat(latestTracking.longitude.toString()),
-        lastUpdated: latestTracking.recorded_at
+      sfxStatus: sfxOrder?.sfx_status || null,
+      riderDetails: rider,
+      rider: latestTracking?.lat != null && latestTracking?.lng != null ? {
+        lat: parseFloat(latestTracking.lat.toString()),
+        lng: parseFloat(latestTracking.lng.toString()),
+        lastUpdated: latestTracking.received_at
       } : null,
       vendor: order.vendors?.latitude && order.vendors?.longitude ? {
         lat: parseFloat(order.vendors.latitude.toString()),

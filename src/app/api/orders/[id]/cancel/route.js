@@ -1,10 +1,13 @@
 import { prisma } from "@/lib/prisma";
 import { getAdmin } from "@/lib/auth";
+import { logActivity } from "@/lib/audit";
+import logger from "@/lib/logger";
 import { NextResponse } from "next/server";
 
 export async function PATCH(request, { params }) {
+  let id;
   try {
-    const { id } = await params;
+    ({ id } = await params);
     const body = await request.json();
     const { reason, notes } = body;
 
@@ -65,9 +68,20 @@ export async function PATCH(request, { params }) {
       });
     });
 
+    await logActivity(
+      "ORDER_CANCELLED",
+      { orderId, reason, notes: notes || undefined },
+      admin.id
+    );
+
     return NextResponse.json({ success: true, message: "Order cancelled successfully" });
   } catch (error) {
-    console.error("Cancel Order API Error:", error);
+    logger.error("Order cancellation failed", error, {
+      component: "api/orders/[id]/cancel",
+      operation: "PATCH cancelOrder",
+      orderId: id,
+      prismaCode: error?.code,
+    });
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

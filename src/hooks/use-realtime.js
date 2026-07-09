@@ -25,8 +25,12 @@ export function useRealtime(apiUrl, options = {}) {
   const [connected, setConnected] = useState(false);
   const dataRef = useRef(realtimeCache.get(apiUrl) || null);
   const isInitialLoad = useRef(!realtimeCache.has(apiUrl));
+  // Once the session is gone, stop polling so we don't throw a 401 every tick.
+  const stoppedRef = useRef(false);
 
   const fetchData = useCallback(async () => {
+    if (stoppedRef.current) return;
+
     // Optimization: Skip fetching if tab is hidden
     if (typeof document !== 'undefined' && document.hidden) {
       return;
@@ -34,6 +38,19 @@ export function useRealtime(apiUrl, options = {}) {
 
     try {
       const res = await fetch(apiUrl, { cache: 'no-store' });
+
+      // Session expired / not authenticated: stop polling and bounce to login
+      // once, instead of surfacing a 401 console error on every interval tick.
+      if (res.status === 401) {
+        stoppedRef.current = true;
+        setConnected(false);
+        setLoading(false);
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/admin-login')) {
+          window.location.href = '/admin-login';
+        }
+        return;
+      }
+
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       const newData = await res.json();
 
@@ -83,7 +100,16 @@ export function useRealtime(apiUrl, options = {}) {
         setConnected(true);
       }
     } catch (err) {
-      console.error(`[Realtime Polling Error - ${apiUrl}]:`, err);
+      // A network-level failure rejects fetch() with a TypeError ("Failed to fetch") —
+      // e.g. the dev server hot-reloading, a brief offline, or a request interrupted by
+      // navigation. For a polling hook this is transient and self-heals on the next tick,
+      // so downgrade it to a warning instead of a console.error that trips the dev error
+      // overlay / Sentry every blip. Genuine (non-network) errors are still logged loudly.
+      if (err instanceof TypeError) {
+        console.warn(`[Realtime] Transient network error polling ${apiUrl}; will retry.`);
+      } else {
+        console.error(`[Realtime Polling Error - ${apiUrl}]:`, err);
+      }
       setConnected(false);
     }
   }, [apiUrl, patchKey, toastConfig, onDataUpdate]);
@@ -91,6 +117,7 @@ export function useRealtime(apiUrl, options = {}) {
   useEffect(() => {
     // Reset state when apiUrl changes
     isInitialLoad.current = true;
+    stoppedRef.current = false;
     setLoading(true);
     
     fetchData();

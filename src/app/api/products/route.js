@@ -26,7 +26,8 @@ export async function GET() {
       time: p.created_at,
       description: p.description || "",
       imageUrl: p.product_images?.[0]?.url || "",
-      is_customizable: p.is_customizable || (p.product_addons?.length > 0)
+      is_customizable: p.is_customizable || (p.product_addons?.length > 0),
+      isActive: p.is_active !== false
     }));
 
     return NextResponse.json(mappedProducts);
@@ -39,15 +40,26 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { 
-      name, vendor_id, base_price, category, product_type, 
+    const {
+      name, vendor_id, base_price, category, product_type,
       review_status, description, imageUrl, is_customizable, customization_type, template_id,
-      customization_groups 
+      customization_groups, add_ons
     } = body;
 
     if (!name || !vendor_id || !base_price) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
+
+    // Keep only groups/options/add-ons that actually have a name, so empty builder
+    // rows don't create junk records.
+    const cleanGroups = (customization_groups || [])
+      .filter(g => g?.name?.trim())
+      .map((group, gIdx) => ({
+        ...group,
+        display_order: group.display_order ?? gIdx,
+        options: (group.options || []).filter(o => o?.name?.trim()),
+      }));
+    const cleanAddons = (add_ons || []).filter(a => a?.name?.trim());
 
     const productId = crypto.randomUUID();
 
@@ -72,9 +84,18 @@ export async function POST(request) {
             }
           }
         }),
-        ...(customization_groups && customization_groups.length > 0 && {
+        ...(cleanAddons.length > 0 && {
+          product_addons: {
+            create: cleanAddons.map(a => ({
+              name: a.name.trim(),
+              price: Number(a.price) || 0,
+              free_limit: Number(a.free_limit) || 0,
+            }))
+          }
+        }),
+        ...(cleanGroups.length > 0 && {
           product_customization_groups: {
-            create: customization_groups.map((group, gIdx) => ({
+            create: cleanGroups.map((group, gIdx) => ({
               name: group.name,
               is_required: group.is_required || false,
               selection_type: group.selection_type || "SINGLE",
@@ -96,6 +117,7 @@ export async function POST(request) {
         })
       },
       include: {
+        product_addons: true,
         product_customization_groups: {
           include: {
             product_customization_options: true
@@ -121,7 +143,7 @@ export async function POST(request) {
 export async function PATCH(request) {
   try {
     const body = await request.json();
-    const { id, status, name, base_price, category, product_type, description, imageUrl, is_customizable } = body;
+    const { id, status, name, base_price, category, product_type, description, imageUrl, is_customizable, is_active } = body;
 
     if (!id) {
       return NextResponse.json({ error: "Missing product ID" }, { status: 400 });
@@ -135,6 +157,14 @@ export async function PATCH(request) {
     if (product_type) data.product_type = product_type;
     if (description !== undefined) data.description = description;
     if (is_customizable !== undefined) data.is_customizable = is_customizable;
+    // Admin enable/disable switch — hide/show the product without changing its review_status.
+    if (is_active !== undefined) data.is_active = Boolean(is_active);
+    // Approving a product makes it LIVE: all new products are created pending_review +
+    // inactive, so approval must also activate it (unless is_active was explicitly set in
+    // the same request) — otherwise an approved product would stay hidden from customers.
+    if (status && status.toLowerCase() === "approved" && is_active === undefined) {
+      data.is_active = true;
+    }
 
     if (imageUrl) {
       // Upsert the first image or create a new one

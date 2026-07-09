@@ -8,15 +8,19 @@ export async function GET() {
     const templates = await prisma.byo_templates.findMany({
       include: {
         byo_template_groups: {
-          orderBy: { display_order: 'asc' }
+          orderBy: { display_order: 'asc' },
+          include: {
+            byo_template_options: { orderBy: { display_order: 'asc' } }
+          }
         },
+        vendors: { select: { id: true, business_name: true } }, // owner (vendor-authored)
         vendor_assigned_templates: {
           include: {
             vendors: { select: { id: true, business_name: true } }
           }
         }
       },
-      orderBy: { created_at: 'desc' }
+      orderBy: [{ status: 'asc' }, { created_at: 'desc' }]
     });
     return NextResponse.json(templates);
   } catch (error) {
@@ -34,30 +38,32 @@ export async function POST(request) {
       return NextResponse.json({ error: "Template name is required" }, { status: 400 });
     }
 
-    // Fetch all active vendors to auto-assign the template to everyone
-    const allVendors = await prisma.vendors.findMany({
-      select: { id: true }
-    });
-
+    // An admin-created template is assigned to NO ONE by default — the admin explicitly
+    // assigns it to the relevant vendors afterwards (via the Assign action). (Previously
+    // this auto-assigned to every vendor, which is not wanted.)
     const template = await prisma.byo_templates.create({
       data: {
         name,
         category,
         description,
         byo_template_groups: {
-          create: groups?.map((g, index) => ({
-            name: g.name,
+          create: (groups || []).filter(g => g?.name?.trim()).map((g, index) => ({
+            name: g.name.trim(),
             selection_type: g.selection_type || "SINGLE",
             is_required: g.is_required || false,
             max_limit: g.max_limit || null,
             free_threshold: g.free_threshold || 0,
             extra_price: g.extra_price || 0,
-            display_order: g.display_order ?? index
-          })) || []
-        },
-        vendor_assigned_templates: {
-          create: allVendors.map(v => ({
-            vendor_id: v.id
+            display_order: g.display_order ?? index,
+            byo_template_options: {
+              create: (g.options || []).filter(o => o?.name?.trim()).map((o, oi) => ({
+                name: o.name.trim(),
+                price_modifier: Number(o.price_modifier) || 0,
+                is_available: o.is_available !== false,
+                display_order: o.display_order ?? oi,
+                image_url: o.image_url || null,
+              }))
+            }
           }))
         }
       },
@@ -100,19 +106,30 @@ export async function PUT(request) {
         category,
         description,
         byo_template_groups: {
-          create: groups?.map((g, index) => ({
-            name: g.name,
+          create: (groups || []).filter(g => g?.name?.trim()).map((g, index) => ({
+            name: g.name.trim(),
             selection_type: g.selection_type || "SINGLE",
             is_required: g.is_required || false,
             max_limit: g.max_limit || null,
             free_threshold: g.free_threshold || 0,
             extra_price: g.extra_price || 0,
-            display_order: g.display_order ?? index
-          })) || []
+            display_order: g.display_order ?? index,
+            byo_template_options: {
+              create: (g.options || []).filter(o => o?.name?.trim()).map((o, oi) => ({
+                name: o.name.trim(),
+                price_modifier: Number(o.price_modifier) || 0,
+                is_available: o.is_available !== false,
+                display_order: o.display_order ?? oi,
+                image_url: o.image_url || null,
+              }))
+            }
+          }))
         }
       },
       include: {
-        byo_template_groups: true
+        byo_template_groups: {
+          include: { byo_template_options: true }
+        }
       }
     });
 

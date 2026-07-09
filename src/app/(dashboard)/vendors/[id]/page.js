@@ -82,6 +82,15 @@ const STATUS_CONFIG = {
 
 const mapContainerStyle = { width: '100%', height: '256px', cursor: 'pointer' };
 
+// KYC document slots — `field` is the multipart key the API expects, `type` matches the
+// `type` label returned by the vendor GET API so we can surface the currently-stored file.
+const KYC_DOC_FIELDS = [
+  { field: "govId", label: "Government ID", type: "Government ID" },
+  { field: "businessProof", label: "Business Proof", type: "Business Proof" },
+  { field: "panCard", label: "PAN Card", type: "PAN Card" },
+  { field: "addressProof", label: "Address Proof", type: "Address Proof" },
+];
+
 function VendorMap({ lat, lng }) {
   const { isLoaded } = useJsApiLoader({
     id: 'google-map-script',
@@ -132,6 +141,8 @@ export default function VendorDetailPage() {
   const [isRejectDialogOpen, setIsRejectDialogOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [isFlagDialogOpen, setIsFlagDialogOpen] = useState(false);
+  const [isDisableDialogOpen, setIsDisableDialogOpen] = useState(false);
+  const [disableDuration, setDisableDuration] = useState("1");
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({
@@ -153,6 +164,18 @@ export default function VendorDetailPage() {
     upiId: "",
   });
   const [updatingDetails, setUpdatingDetails] = useState(false);
+  const [kycFiles, setKycFiles] = useState({ govId: null, businessProof: null, panCard: null, addressProof: null });
+  const [categoryOptions, setCategoryOptions] = useState([]);
+
+  // Load the admin-managed business categories for the Edit dialog dropdown.
+  useEffect(() => {
+    let active = true;
+    fetch("/api/categories?active=1")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => { if (active) setCategoryOptions(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (vendor) {
@@ -184,6 +207,7 @@ export default function VendorDetailPage() {
     }
     setUpdatingDetails(true);
     try {
+      // 1. Save the general business + bank details (JSON).
       const res = await fetch(`/api/vendors/${vendorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -194,8 +218,23 @@ export default function VendorDetailPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update vendor details");
+
+      // 2. If the admin picked any replacement KYC documents, upload them (multipart).
+      const selectedDocs = Object.entries(kycFiles).filter(([, file]) => file);
+      if (selectedDocs.length > 0) {
+        const fd = new FormData();
+        selectedDocs.forEach(([field, file]) => fd.append(field, file));
+        const kycRes = await fetch(`/api/vendors/${vendorId}/kyc`, {
+          method: "PUT",
+          body: fd,
+        });
+        const kycData = await kycRes.json();
+        if (!kycRes.ok) throw new Error(kycData.error || "Vendor details saved, but updating KYC documents failed.");
+      }
+
       toast.success("Vendor details updated successfully!");
       setIsEditModalOpen(false);
+      setKycFiles({ govId: null, businessProof: null, panCard: null, addressProof: null });
       mutate();
     } catch (error) {
       toast.error(error.message);
@@ -204,16 +243,8 @@ export default function VendorDetailPage() {
     }
   };
 
-  const [sfxCode, setSfxCode] = useState("");
-  const [isLinking, setIsLinking] = useState(false);
   const [earningsData, setEarningsData] = useState(null);
   const [loadingEarnings, setLoadingEarnings] = useState(false);
-
-  useEffect(() => {
-    if (vendor) {
-      setSfxCode(vendor.sfxStoreCode || "");
-    }
-  }, [vendor]);
 
   useEffect(() => {
     if (activeTab === "earnings" && !earningsData) {
@@ -312,10 +343,16 @@ export default function VendorDetailPage() {
       const res = await fetch(`/api/vendors/${vendorId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "DISABLE" })
+        body: JSON.stringify({ action: "DISABLE", duration: disableDuration })
       });
       if (!res.ok) throw new Error("Failed to disable vendor");
-      toast.error("Vendor disabled");
+      if (disableDuration === "permanent") {
+        toast.error("Vendor disabled permanently");
+      } else {
+        toast.error(`Vendor disabled for ${disableDuration} hour(s)`);
+      }
+      setIsDisableDialogOpen(false);
+      mutate();
     } catch (error) {
       toast.error(error.message);
     }
@@ -337,24 +374,6 @@ export default function VendorDetailPage() {
 
 
 
-  const handleLinkShadowfax = async () => {
-    if (!sfxCode) return toast.error("Please enter a Shadowfax Store Code");
-    setIsLinking(true);
-    try {
-      const res = await fetch(`/api/vendors/${vendorId}/shadowfax`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sfxStoreCode: sfxCode })
-      });
-      if (!res.ok) throw new Error("Failed to link Shadowfax Store Code");
-      toast.success("Shadowfax Delivery ID linked successfully");
-    } catch (error) {
-      toast.error(error.message);
-    } finally {
-      setIsLinking(false);
-    }
-  };
-
   const handleApproveVendor = async () => {
     try {
       const res = await fetch(`/api/vendors/${vendorId}`, {
@@ -364,9 +383,10 @@ export default function VendorDetailPage() {
       });
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.error || "Failed to approve vendor");
+        throw new Error(err.message || err.error || "Failed to approve vendor");
       }
       toast.success("Vendor approved successfully and is now ACTIVE");
+      mutate();
     } catch (error) {
       toast.error(error.message);
     }
@@ -405,7 +425,10 @@ export default function VendorDetailPage() {
             <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <h1 className="text-2xl sm:text-3xl font-black text-swiggy-navy dark:text-white tracking-tight truncate">{vendor.businessName}</h1>
               {(() => {
-                const config = STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED;
+                const isTempDisabled = vendor.status && vendor.status.startsWith("DISABLED:");
+                const config = isTempDisabled 
+                  ? { label: "Disabled (Temp)", color: "bg-red-50 text-red-700 border-red-200" } 
+                  : (STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED);
                 return (
                   <Badge className={`${config.color} font-bold text-[9px] sm:text-[10px] uppercase tracking-wider whitespace-nowrap`}>
                     {config.label}
@@ -551,7 +574,10 @@ export default function VendorDetailPage() {
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-swiggy-gray">Vendor Status</p>
                         {(() => {
-                          const config = STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED;
+                          const isTempDisabled = vendor.status && vendor.status.startsWith("DISABLED:");
+                          const config = isTempDisabled 
+                            ? { label: "Disabled (Temp)", color: "bg-red-50 text-red-700 border-red-200" } 
+                            : (STATUS_CONFIG[vendor.status] || STATUS_CONFIG.DISABLED);
                           return (
                             <Badge className={`${config.color} mt-1 font-bold text-[10px] uppercase tracking-wider`}>
                               {config.label}
@@ -575,73 +601,11 @@ export default function VendorDetailPage() {
                 <VendorMap lat={vendor.lat} lng={vendor.lng} />
               </CardContent>
             </Card>
-            <CommissionManagement vendor={vendor} vendorId={vendorId} />
+            <CommissionManagement vendor={vendor} vendorId={vendorId} onUpdated={mutate} />
           </div>
 
           <div className="space-y-6">
-            {/* 2. Delivery Integration Card */}
-            <Card className="rounded-[2.5rem] border-zinc-100 shadow-xl overflow-hidden group hover:shadow-2xl transition-all duration-500">
-               <CardHeader className="p-8 border-b border-zinc-50 bg-swiggy-navy relative overflow-hidden">
-                 <div className="absolute top-0 right-0 w-32 h-32 bg-swiggy-orange/10 rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
-                 <CardTitle className="text-xl font-black text-white inline-flex items-center gap-3 relative z-10">
-                   <div className="w-10 h-10 bg-swiggy-orange/20 rounded-xl flex items-center justify-center border border-swiggy-orange/30">
-                     <Store className="w-5 h-5 text-swiggy-orange" />
-                   </div>
-                   Shadowfax Delivery Integration
-                 </CardTitle>
-               </CardHeader>
-               <CardContent className="p-8 space-y-8">
-                 <div className="space-y-4">
-                   <div className="flex flex-col gap-2">
-                     <Label className="text-xs font-black uppercase tracking-[0.15em] text-swiggy-gray ml-1">Shadowfax Store Code</Label>
-                     <div className="flex flex-col gap-4">
-                        <input 
-                          type="text"
-                          value={sfxCode}
-                          onChange={(e) => setSfxCode(e.target.value)}
-                          className="w-full h-14 rounded-2xl border-2 border-zinc-100 bg-zinc-50/50 px-6 font-black text-lg text-swiggy-navy focus:border-swiggy-orange focus:bg-white outline-none transition-all uppercase placeholder:text-zinc-300"
-                          placeholder="SFX1234545"
-                        />
-                        <Button 
-                          className="w-full h-14 bg-swiggy-orange hover:bg-swiggy-orange/90 text-white font-black px-8 rounded-2xl shadow-lg shadow-swiggy-orange/20 group transition-all duration-300"
-                          onClick={handleLinkShadowfax}
-                          disabled={isLinking}
-                        >
-                          {isLinking ? (
-                            <span className="flex items-center gap-2">
-                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              Linking Store...
-                            </span>
-                          ) : (
-                            <span className="flex items-center gap-2">
-                              Update Store ID
-                              <CheckCircle2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                            </span>
-                          )}
-                        </Button>
-                     </div>
-                   </div>
-                 </div>
-
-                 <div className="pt-8 border-t border-zinc-100 flex items-center justify-between">
-                   <div className="flex flex-col gap-1">
-                     <span className="text-xs font-black uppercase tracking-widest text-swiggy-navy">Integration Status</span>
-                     <p className="text-[10px] font-bold text-swiggy-gray uppercase">Last checked: Today at 2:45 PM</p>
-                   </div>
-                   {vendor.shadowfaxLinked ? (
-                     <Badge className="h-10 px-6 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-100 font-black text-xs uppercase tracking-widest shadow-sm">
-                       Linked
-                     </Badge>
-                   ) : (
-                     <Badge className="h-10 px-6 rounded-full bg-zinc-50 text-zinc-400 border border-zinc-100 font-black text-xs uppercase tracking-widest">
-                       Not Linked
-                     </Badge>
-                   )}
-                 </div>
-               </CardContent>
-            </Card>
-
-            {/* 3. Approval Action Card */}
+            {/* Approval Action Card */}
             <Card className="rounded-3xl border-zinc-100 shadow-sm overflow-hidden">
                <CardHeader className="p-8 border-b border-zinc-50 bg-swiggy-navy">
                  <CardTitle className="text-lg font-black text-white inline-flex items-center gap-2">
@@ -649,25 +613,16 @@ export default function VendorDetailPage() {
                  </CardTitle>
                </CardHeader>
                <CardContent className="p-8 space-y-4">
-                 {!vendor.shadowfaxLinked && (
-                   <div className="p-4 rounded-2xl bg-amber-50 border border-amber-100 flex gap-3 items-start mb-2">
-                     <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
-                     <p className="text-xs font-bold text-amber-900 leading-relaxed">
-                       Please configure Shadowfax Store Code before approving this vendor.
-                     </p>
-                   </div>
-                 )}
-
-                 <Button 
+                 <Button
                    className={`w-full h-14 font-black uppercase tracking-widest rounded-2xl gap-3 shadow-lg ${
-                     vendor.shadowfaxLinked 
-                       ? 'bg-green-500 hover:bg-green-600 text-white shadow-green-100' 
-                       : 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                     vendor.status === 'ACTIVE'
+                       ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                       : 'bg-green-500 hover:bg-green-600 text-white shadow-green-100'
                    }`}
                    onClick={handleApproveVendor}
-                   disabled={!vendor.shadowfaxLinked || vendor.status === 'ACTIVE'}
+                   disabled={vendor.status === 'ACTIVE'}
                  >
-                   <CheckCircle2 className="w-5 h-5" /> 
+                   <CheckCircle2 className="w-5 h-5" />
                    {vendor.status === 'ACTIVE' ? 'Vendor Active' : 'Approve Vendor'}
                  </Button>
 
@@ -882,9 +837,9 @@ export default function VendorDetailPage() {
                   <Button 
                     variant="outline"
                     className="w-full h-14 border-red-200 text-red-500 hover:bg-red-50 font-black uppercase tracking-widest rounded-2xl gap-3"
-                    onClick={handleDisable}
+                    onClick={() => setIsDisableDialogOpen(true)}
                   >
-                    <XCircle className="w-5 h-5" /> Disable Vendor (Permanent)
+                    <XCircle className="w-5 h-5" /> Disable Vendor (Temporary / Permanent)
                   </Button>
                 )}
                 {vendor.status === 'SUSPENDED' && (
@@ -1091,15 +1046,55 @@ export default function VendorDetailPage() {
         </DialogContent>
       </Dialog>
 
+      {/* Disable Vendor Dialog */}
+      <Dialog open={isDisableDialogOpen} onOpenChange={setIsDisableDialogOpen}>
+        <DialogContent className="sm:max-w-[500px] rounded-3xl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black text-red-600 flex items-center gap-2">
+              <XCircle className="w-5 h-5" /> Disable Vendor Account
+            </DialogTitle>
+            <DialogDescription className="font-medium text-zinc-500">
+              Select the duration for disablement. The vendor app will show a ticking countdown for temporary durations.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label className="font-bold text-swiggy-navy">Select Duration</Label>
+              <Select value={disableDuration} onValueChange={setDisableDuration}>
+                <SelectTrigger className="h-11 rounded-xl font-bold">
+                  <SelectValue placeholder="Select duration" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="1" className="font-bold">1 Hour</SelectItem>
+                  <SelectItem value="6" className="font-bold">6 Hours</SelectItem>
+                  <SelectItem value="12" className="font-bold">12 Hours</SelectItem>
+                  <SelectItem value="24" className="font-bold">24 Hours</SelectItem>
+                  <SelectItem value="72" className="font-bold">3 Days</SelectItem>
+                  <SelectItem value="168" className="font-bold">1 Week</SelectItem>
+                  <SelectItem value="permanent" className="font-bold text-red-600">Permanent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" className="font-bold" onClick={() => setIsDisableDialogOpen(false)}>Cancel</Button>
+            <Button className="bg-red-500 hover:bg-red-600 font-bold px-6" onClick={handleDisable}>Confirm Disablement</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Edit Vendor Details Dialog */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
+      <Dialog open={isEditModalOpen} onOpenChange={(open) => {
+        setIsEditModalOpen(open);
+        if (!open) setKycFiles({ govId: null, businessProof: null, panCard: null, addressProof: null });
+      }}>
         <DialogContent className="sm:max-w-[700px] w-[95vw] max-h-[90vh] overflow-y-auto rounded-3xl bg-white border border-zinc-100 shadow-2xl p-0">
           <DialogHeader className="p-8 pb-4 border-b border-zinc-50">
             <DialogTitle className="text-2xl font-black text-swiggy-navy uppercase tracking-tight flex items-center gap-2">
               <Edit className="w-6 h-6 text-swiggy-orange" /> Edit Vendor Details
             </DialogTitle>
             <DialogDescription className="text-sm font-medium text-zinc-500">
-              Modify the general business details and bank settlement information for <strong>{vendor.businessName}</strong>.
+              Modify the general business details, bank settlement information, and KYC documents for <strong>{vendor.businessName}</strong>.
             </DialogDescription>
           </DialogHeader>
 
@@ -1112,6 +1107,9 @@ export default function VendorDetailPage() {
                   </TabsTrigger>
                   <TabsTrigger value="bank" className="rounded-lg px-4 py-2 font-bold data-[state=active]:bg-white data-[state=active]:text-swiggy-navy data-[state=active]:shadow-sm text-xs sm:text-sm">
                     Bank Details
+                  </TabsTrigger>
+                  <TabsTrigger value="kyc" className="rounded-lg px-4 py-2 font-bold data-[state=active]:bg-white data-[state=active]:text-swiggy-navy data-[state=active]:shadow-sm text-xs sm:text-sm">
+                    KYC Documents
                   </TabsTrigger>
                 </TabsList>
               </div>
@@ -1168,15 +1166,17 @@ export default function VendorDetailPage() {
                         <SelectValue placeholder="Select Category" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="South Indian">South Indian</SelectItem>
-                        <SelectItem value="North Indian">North Indian</SelectItem>
-                        <SelectItem value="Chinese">Chinese</SelectItem>
-                        <SelectItem value="Italian">Italian</SelectItem>
-                        <SelectItem value="Desserts">Desserts</SelectItem>
-                        <SelectItem value="Biryani">Biryani</SelectItem>
-                        <SelectItem value="Burgers & Pizzas">Burgers & Pizzas</SelectItem>
-                        <SelectItem value="Bakery">Bakery</SelectItem>
-                        <SelectItem value="General">General</SelectItem>
+                        {(() => {
+                          const names = categoryOptions.map((c) => c.name);
+                          // Keep the vendor's current category selectable even if it was
+                          // since disabled or predates the managed list.
+                          if (editForm.category && !names.includes(editForm.category)) {
+                            names.unshift(editForm.category);
+                          }
+                          return names.map((name) => (
+                            <SelectItem key={name} value={name}>{name}</SelectItem>
+                          ));
+                        })()}
                       </SelectContent>
                     </Select>
                   </div>
@@ -1276,14 +1276,63 @@ export default function VendorDetailPage() {
                   </div>
                 </div>
               </TabsContent>
+
+              <TabsContent value="kyc" className="p-8 space-y-6">
+                <div className="rounded-xl bg-amber-50 border border-amber-100 p-4 flex gap-3 items-start">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                  <p className="text-xs font-bold text-amber-900 leading-relaxed">
+                    Upload a new file only for the documents you want to replace. Documents left blank stay as they are.
+                  </p>
+                </div>
+
+                <div className="space-y-5">
+                  {KYC_DOC_FIELDS.map((doc) => {
+                    const currentUrl = vendor.kycDocuments?.find(d => d.type === doc.type)?.url;
+                    const selectedFile = kycFiles[doc.field];
+                    return (
+                      <div key={doc.field} className="flex flex-col gap-2 rounded-2xl border border-zinc-100 p-4">
+                        <div className="flex items-center justify-between gap-2">
+                          <Label className="text-xs font-black uppercase tracking-wider text-swiggy-navy">{doc.label}</Label>
+                          {currentUrl ? (
+                            <a
+                              href={currentUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1.5 text-xs font-bold text-swiggy-orange hover:underline"
+                            >
+                              <Eye className="w-3.5 h-3.5" /> View current
+                            </a>
+                          ) : (
+                            <span className="text-xs font-bold text-red-400 italic">Not uploaded</span>
+                          )}
+                        </div>
+                        <Input
+                          type="file"
+                          accept="image/*,application/pdf"
+                          onChange={(e) => setKycFiles(prev => ({ ...prev, [doc.field]: e.target.files?.[0] || null }))}
+                          className="h-12 rounded-xl border border-zinc-200 font-bold focus:border-swiggy-orange text-sm px-4 py-2.5 file:mr-3 file:rounded-lg file:bg-swiggy-orange/10 file:px-3 file:py-1.5 file:font-bold file:text-swiggy-orange cursor-pointer"
+                        />
+                        {selectedFile && (
+                          <p className="text-xs font-bold text-emerald-600 flex items-center gap-1.5">
+                            <CheckCircle2 className="w-3.5 h-3.5" /> New file selected: {selectedFile.name}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </TabsContent>
             </Tabs>
 
             <DialogFooter className="p-8 border-t border-zinc-50 bg-zinc-50/20 gap-3 sm:gap-0">
-              <Button 
-                type="button" 
-                variant="outline" 
-                className="rounded-xl font-bold h-12 px-6 border-zinc-200" 
-                onClick={() => setIsEditModalOpen(false)}
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-xl font-bold h-12 px-6 border-zinc-200"
+                onClick={() => {
+                  setIsEditModalOpen(false);
+                  setKycFiles({ govId: null, businessProof: null, panCard: null, addressProof: null });
+                }}
               >
                 Cancel
               </Button>

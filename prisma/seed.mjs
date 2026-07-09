@@ -1,4 +1,4 @@
-import { PrismaClient } from '../src/generated/prisma/index.js';
+import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import pg from 'pg';
 import bcrypt from "bcryptjs";
@@ -12,29 +12,23 @@ async function main() {
   console.log("Seeding database...");
 
   const adminEmail = "abid@gmail.com";
-  const existingAdmin = await prisma.adminUser.findUnique({
-    where: { email: adminEmail },
-  });
-
-  if (existingAdmin) {
-    console.log("Admin user already exists.");
-  } else {
-    const seedPassword = process.env.ADMIN_SEED_PASSWORD;
-    if (!seedPassword) {
-      throw new Error("ADMIN_SEED_PASSWORD environment variable is required for seeding!");
-    }
-    const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(seedPassword, salt);
-
-    await prisma.adminUser.create({
-      data: {
-        name: "Super Admin",
-        email: adminEmail,
-        passwordHash,
-      },
-    });
-    console.log(`Admin user created: ${adminEmail}`);
+  const seedPassword = process.env.ADMIN_SEED_PASSWORD;
+  if (!seedPassword) {
+    throw new Error("ADMIN_SEED_PASSWORD environment variable is required for seeding!");
   }
+  const salt = await bcrypt.genSalt(10);
+  const passwordHash = await bcrypt.hash(seedPassword, salt);
+
+  await prisma.adminUser.upsert({
+    where: { email: adminEmail },
+    update: { passwordHash },
+    create: {
+      name: "Super Admin",
+      email: adminEmail,
+      passwordHash,
+    },
+  });
+  console.log(`Admin user seeded/updated: ${adminEmail}`);
 
   console.log("Seeding completed.");
 }

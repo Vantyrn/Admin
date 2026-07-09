@@ -111,7 +111,7 @@ const SlaTimer = ({ createdAt, status }) => {
 
 export default function OrdersPage() {
   const { data: orders, loading } = useRealtime("/api/orders", {
-    interval: 1000,
+    interval: 10000, // 10s — matches the live cadence used elsewhere (was 1s)
     toastConfig: {
       new: (o) => `New Order #${o.shortId} Received!`,
       description: (o) => `Amount: ${o.amount}`

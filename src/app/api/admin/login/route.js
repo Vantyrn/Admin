@@ -69,15 +69,15 @@ export async function POST(request) {
       );
     }
 
-    // 4. Create JWT
+    // 4. Create JWT — 30-minute session (rolling refresh handled in middleware.js)
     const token = await signJwt({
       id: adminUser.id,
       email: adminUser.email,
       name: adminUser.name,
       role: "admin",
-    });
+    }, "30m");
 
-    // 5. Set Secure Cookie
+    // 5. Set Secure SESSION Cookie (no maxAge → cleared when the browser closes)
     const cookieStore = await cookies();
     cookieStore.set({
       name: "admin_token",
@@ -86,7 +86,6 @@ export async function POST(request) {
       secure: process.env.NODE_ENV === "production",
       sameSite: "strict",
       path: "/",
-      maxAge: 60 * 60 * 24, // 1 day
     });
 
     // 6. Log Success

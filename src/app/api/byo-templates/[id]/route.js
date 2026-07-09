@@ -10,7 +10,8 @@ export async function GET(request, { params }) {
       where: { id },
       include: {
         byo_template_groups: {
-          orderBy: { display_order: 'asc' }
+          orderBy: { display_order: 'asc' },
+          include: { byo_template_options: { orderBy: { display_order: 'asc' } } }
         }
       }
     });
@@ -29,52 +30,59 @@ export async function PATCH(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    const { name, category, groups } = body;
+    const { name, category, description, groups, status, isActive, rejectionReason } = body;
 
-    // Update template basic info
     const updateData = {};
     if (name) updateData.name = name;
     if (category !== undefined) updateData.category = category;
+    if (description !== undefined) updateData.description = description;
+    // Moderation: approve / reject / enable / disable a (vendor-authored) template.
+    if (status !== undefined) updateData.status = status;
+    if (isActive !== undefined) updateData.is_active = Boolean(isActive);
+    if (rejectionReason !== undefined) updateData.rejection_reason = rejectionReason;
 
-    const template = await prisma.byo_templates.update({
-      where: { id },
-      data: updateData
-    });
-
-    // Handle groups if provided
+    // Replace groups (+ their options) when provided. Products snapshot their own
+    // copy of a template's groups/options, so recreating the template is safe and
+    // never mutates already-built products.
     if (groups && Array.isArray(groups)) {
-      // For simplicity, we can delete all existing groups and recreate them,
-      // or we can use an upsert approach. Since templates might have active products linked,
-      // wait, products copy groups to `product_customization_groups`. So it's safe to recreate
-      // template groups.
-      await prisma.byo_template_groups.deleteMany({
-        where: { template_id: id }
-      });
-
-      if (groups.length > 0) {
-        await prisma.byo_template_groups.createMany({
-          data: groups.map((g, index) => ({
-            template_id: id,
-            name: g.name,
-            selection_type: g.selection_type || "SINGLE",
-            is_required: g.is_required || false,
-            max_limit: g.max_limit || null,
-            display_order: g.display_order ?? index
-          }))
-        });
-      }
+      await prisma.byo_template_groups.deleteMany({ where: { template_id: id } });
+      updateData.byo_template_groups = {
+        create: groups.filter(g => g?.name?.trim()).map((g, index) => ({
+          name: g.name.trim(),
+          selection_type: g.selection_type || "SINGLE",
+          is_required: g.is_required || false,
+          max_limit: g.max_limit || null,
+          free_threshold: g.free_threshold || 0,
+          extra_price: g.extra_price || 0,
+          display_order: g.display_order ?? index,
+          byo_template_options: {
+            create: (g.options || []).filter(o => o?.name?.trim()).map((o, oi) => ({
+              name: o.name.trim(),
+              price_modifier: Number(o.price_modifier) || 0,
+              is_available: o.is_available !== false,
+              display_order: o.display_order ?? oi,
+              image_url: o.image_url || null,
+            }))
+          }
+        }))
+      };
     }
 
-    const updatedTemplate = await prisma.byo_templates.findUnique({
+    const updatedTemplate = await prisma.byo_templates.update({
       where: { id },
-      include: { byo_template_groups: { orderBy: { display_order: 'asc' } } }
+      data: updateData,
+      include: {
+        byo_template_groups: {
+          orderBy: { display_order: 'asc' },
+          include: { byo_template_options: { orderBy: { display_order: 'asc' } } }
+        }
+      }
     });
 
     const admin = await getAdmin();
-    await logActivity("TEMPLATE_UPDATED", { 
-      templateId: id, 
+    await logActivity("TEMPLATE_UPDATED", {
+      templateId: id,
       name: updatedTemplate.name,
-      updates: updateData 
     }, admin?.id);
     return NextResponse.json(updatedTemplate);
   } catch (error) {

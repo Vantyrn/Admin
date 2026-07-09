@@ -4,10 +4,11 @@ import React, { useState, useMemo, useEffect } from "react";
 import { useRealtime } from "@/hooks/use-realtime";
 import { Skeleton } from "@/components/ui/skeleton";
 import { 
-  Plus, 
-  Search, 
-  Filter, 
-  Eye, 
+  Plus,
+  Search,
+  Filter,
+  Eye,
+  EyeOff,
   Package,
   Edit,
   Trash2,
@@ -66,6 +67,7 @@ import {
 // Mock Data removed
 
 import Link from "next/link";
+import VendorCombobox from "@/components/VendorCombobox";
 
 const STATUS_CONFIG = {
   PENDING_REVIEW: { label: "Pending Review", color: "bg-yellow-100 text-yellow-700 border-yellow-200" },
@@ -81,7 +83,13 @@ export default function ProductsPage() {
     }
   });
   const { data: vendors } = useRealtime("/api/vendors");
-  
+  // Only approved/active vendors can receive products — a vendor that hasn't cleared
+  // onboarding shouldn't be selectable here.
+  const approvedVendors = useMemo(
+    () => (vendors || []).filter((v) => ["APPROVED", "ACTIVE"].includes(v.status)),
+    [vendors]
+  );
+
   const [globalFilter, setGlobalFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("ALL");
   
@@ -103,6 +111,25 @@ export default function ProductsPage() {
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
   const [templateGroups, setTemplateGroups] = useState([]);
   const [productDescription, setProductDescription] = useState("");
+  // Flat add-ons (Swiggy "Make it a meal" extras): { name, price, free_limit }
+  const [addOns, setAddOns] = useState([]);
+
+  const addAddon = () =>
+    setAddOns((prev) => [...prev, { id: crypto.randomUUID(), name: "", price: "", free_limit: "" }]);
+  const updateAddon = (index, field, value) =>
+    setAddOns((prev) => prev.map((a, i) => (i === index ? { ...a, [field]: value } : a)));
+  const removeAddon = (index) => setAddOns((prev) => prev.filter((_, i) => i !== index));
+
+  // Admin-managed business categories for the product category dropdowns.
+  const [categoryOptions, setCategoryOptions] = useState([]);
+  useEffect(() => {
+    let active = true;
+    fetch("/api/categories?active=1")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => { if (active) setCategoryOptions(Array.isArray(data) ? data : []); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (selectedVendorForAdd && customizationType === "BUILD_YOUR_OWN") {
@@ -123,10 +150,15 @@ export default function ProductsPage() {
     setSelectedTemplateId(templateId);
     const template = vendorTemplates.find(t => t.id === templateId);
     if (template) {
-      // Initialize groups and empty options array
+      // Materialize the template's groups AND their options into the editable builder.
       const groupsWithOpts = (template.byo_template_groups || []).map(g => ({
         ...g,
-        options: []
+        options: (g.byo_template_options || []).map(o => ({
+          id: o.id || crypto.randomUUID(),
+          name: o.name,
+          price_modifier: o.price_modifier ?? "",
+          is_available: o.is_available !== false,
+        })),
       }));
       setTemplateGroups(groupsWithOpts);
       if (template.description) {
@@ -211,6 +243,20 @@ export default function ProductsPage() {
     }
   };
 
+  const handleToggleActive = async (product) => {
+    try {
+      const res = await fetch("/api/products", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: product.id, is_active: !product.isActive })
+      });
+      if (!res.ok) throw new Error("Failed to update product");
+      toast.success(product.isActive ? "Product disabled — hidden from customers." : "Product enabled.");
+    } catch (error) {
+      toast.error(error.message);
+    }
+  };
+
   const handleReject = async (id) => {
     try {
       const res = await fetch("/api/products", {
@@ -249,6 +295,8 @@ export default function ProductsPage() {
     try {
       setUploading(true);
       const imageUrl = await uploadImage(addImageFile);
+      const isBYO = customizationType === "BUILD_YOUR_OWN";
+      const hasCustomization = customizationType !== "NONE";
       const payload = {
         name: formData.get("name"),
         vendor_id: formData.get("vendorName"),
@@ -256,12 +304,19 @@ export default function ProductsPage() {
         category: formData.get("category"),
         product_type: formData.get("type"),
         description: productDescription,
-        customization_type: customizationType,
-        is_customizable: customizationType !== "NONE",
+        // DB enum is NORMAL | BUILD_YOUR_OWN — "Standard" maps to NORMAL + not customizable.
+        customization_type: isBYO ? "BUILD_YOUR_OWN" : "NORMAL",
+        is_customizable: hasCustomization,
         imageUrl: imageUrl || "",
-        review_status: customizationType !== "NONE" ? "pending_review" : "approved",
-        ...(customizationType !== "NONE" && {
-          template_id: customizationType === "BUILD_YOUR_OWN" ? selectedTemplateId : null,
+        // Admin is the reviewer, so admin-created products go live immediately.
+        review_status: "approved",
+        ...(hasCustomization && {
+          template_id: isBYO ? selectedTemplateId : null,
+          add_ons: addOns.map(a => ({
+            name: a.name,
+            price: Number(a.price) || 0,
+            free_limit: Number(a.free_limit) || 0,
+          })),
           customization_groups: templateGroups.map((g, i) => ({
             name: g.name,
             selection_type: g.selection_type,
@@ -293,6 +348,8 @@ export default function ProductsPage() {
       setSelectedVendorForAdd("");
       setSelectedTemplateId("");
       setTemplateGroups([]);
+      setAddOns([]);
+      setProductDescription("");
     } catch (err) {
       toast.error(err.message);
     } finally {
@@ -371,6 +428,9 @@ export default function ProductsPage() {
               {row.original.name}
               {row.original.is_customizable && (
                 <Badge variant="outline" className="text-[9px] h-4 px-1 py-0 border-swiggy-orange text-swiggy-orange bg-orange-50">Customizable</Badge>
+              )}
+              {row.original.isActive === false && (
+                <Badge variant="outline" className="text-[9px] h-4 px-1 py-0 border-zinc-300 text-zinc-500 bg-zinc-100">Disabled</Badge>
               )}
             </span>
             {row.original.description && (
@@ -463,6 +523,13 @@ export default function ProductsPage() {
                 <Edit className="w-4 h-4 mr-2" />
                 Edit
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleToggleActive(row.original)}>
+                {row.original.isActive === false ? (
+                  <><Eye className="w-4 h-4 mr-2" /> Enable</>
+                ) : (
+                  <><EyeOff className="w-4 h-4 mr-2" /> Disable (hide)</>
+                )}
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-red-600 focus:text-red-600 focus:bg-red-50" onClick={() => {
                 setSelectedProduct(row.original);
@@ -538,22 +605,13 @@ export default function ProductsPage() {
                 </div>
                 <div className="space-y-1.5 sm:space-y-2">
                   <Label htmlFor="vendorName" className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-zinc-500">Vendor Name</Label>
-                  <Select name="vendorName" required value={selectedVendorForAdd} onValueChange={setSelectedVendorForAdd}>
-                    <SelectTrigger className="h-10 sm:h-12 rounded-xl font-bold text-sm">
-                      <SelectValue placeholder="Select Vendor" />
-                    </SelectTrigger>
-                    <SelectContent className="rounded-xl">
-                      {vendors && vendors.length > 0 ? (
-                        vendors.map(vendor => (
-                          <SelectItem key={vendor.id} value={vendor.id}>
-                            {vendor.businessName}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <SelectItem value="loading" disabled>Loading vendors...</SelectItem>
-                      )}
-                    </SelectContent>
-                  </Select>
+                  <VendorCombobox
+                    name="vendorName"
+                    vendors={approvedVendors}
+                    value={selectedVendorForAdd}
+                    onChange={setSelectedVendorForAdd}
+                    placeholder="Search & select vendor"
+                  />
                 </div>
                 <div className="space-y-1.5 sm:space-y-2">
                   <Label htmlFor="price" className="text-[10px] sm:text-xs font-black uppercase tracking-widest text-zinc-500">Price (₹)</Label>
@@ -566,11 +624,13 @@ export default function ProductsPage() {
                       <SelectValue placeholder="Select Category" />
                     </SelectTrigger>
                     <SelectContent className="rounded-xl">
-                      <SelectItem value="North Indian">North Indian</SelectItem>
-                      <SelectItem value="South Indian">South Indian</SelectItem>
-                      <SelectItem value="Fast Food">Fast Food</SelectItem>
-                      <SelectItem value="Desserts">Desserts</SelectItem>
-                      <SelectItem value="Beverages">Beverages</SelectItem>
+                      {categoryOptions.length === 0 ? (
+                        <SelectItem value="General">General</SelectItem>
+                      ) : (
+                        categoryOptions.map((c) => (
+                          <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                        ))
+                      )}
                     </SelectContent>
                   </Select>
                 </div>
@@ -636,11 +696,11 @@ export default function ProductsPage() {
                       </label>
                       <label className="flex items-center gap-3 cursor-pointer p-3 sm:p-0 bg-zinc-50 sm:bg-transparent rounded-xl sm:rounded-none border border-zinc-100 sm:border-none">
                         <input type="radio" name="customizationType" value="NORMAL" checked={customizationType === "NORMAL"} onChange={() => setCustomizationType("NORMAL")} className="w-4 h-4 text-swiggy-orange focus:ring-swiggy-orange" />
-                        <span className="text-xs sm:text-sm font-black text-swiggy-navy uppercase tracking-tight">Add-ons</span>
+                        <span className="text-xs sm:text-sm font-black text-swiggy-navy uppercase tracking-tight">Add-ons &amp; Customizations</span>
                       </label>
                       <label className="flex items-center gap-3 cursor-pointer p-3 sm:p-0 bg-zinc-50 sm:bg-transparent rounded-xl sm:rounded-none border border-zinc-100 sm:border-none">
                         <input type="radio" name="customizationType" value="BUILD_YOUR_OWN" checked={customizationType === "BUILD_YOUR_OWN"} onChange={() => setCustomizationType("BUILD_YOUR_OWN")} className="w-4 h-4 text-swiggy-orange focus:ring-swiggy-orange" />
-                        <span className="text-xs sm:text-sm font-black text-swiggy-navy uppercase tracking-tight">Template</span>
+                        <span className="text-xs sm:text-sm font-black text-swiggy-navy uppercase tracking-tight">Build Your Own</span>
                       </label>
                     </div>
                   </div>
@@ -694,7 +754,7 @@ export default function ProductsPage() {
                                   <div className="space-y-2">
                                     {group.options.map((opt, oIdx) => (
                                       <div key={opt.id} className="flex items-start gap-2 bg-white p-2 border border-zinc-100 rounded-lg">
-                                        <div className="flex-1 grid grid-cols-2 gap-2">
+                                        <div className="flex-1 grid grid-cols-1 xs:grid-cols-2 gap-2">
                                           <Input placeholder="Item Name (e.g. Cheese)" value={opt.name} onChange={(e) => updateOption(gIdx, oIdx, 'name', e.target.value)} className="h-8 text-sm" />
                                           <Input type="number" placeholder="Price (₹)" value={opt.price_modifier} onChange={(e) => updateOption(gIdx, oIdx, 'price_modifier', e.target.value)} className="h-8 text-sm" />
                                         </div>
@@ -719,9 +779,53 @@ export default function ProductsPage() {
                   )}
 
                   {customizationType === "NORMAL" && (
-                    <div className="pl-6 space-y-4 border-l-2 border-swiggy-orange ml-2 mt-2">
+                    <div className="pl-6 space-y-6 border-l-2 border-swiggy-orange ml-2 mt-2">
+                      {/* Add-ons — flat paid extras (Swiggy "Make it a meal") */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between border-b pb-2">
+                          <div>
+                            <h4 className="font-black text-swiggy-navy">Add-ons</h4>
+                            <p className="text-[10px] text-zinc-500 font-medium">Optional paid extras, e.g. Extra Cheese +₹30</p>
+                          </div>
+                          <Button type="button" variant="outline" size="sm" onClick={addAddon} className="h-8 font-bold border-dashed text-xs">
+                            <Plus className="w-3 h-3 mr-1" /> Add Add-on
+                          </Button>
+                        </div>
+                        {addOns.length === 0 ? (
+                          <p className="text-xs text-zinc-400 font-medium italic">No add-ons yet.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {addOns.map((a, idx) => (
+                              <div key={a.id} className="flex items-end gap-2 bg-zinc-50 border border-zinc-200 rounded-lg p-2">
+                                <div className="flex-1 grid grid-cols-1 xs:grid-cols-3 gap-2">
+                                  <div className="space-y-1">
+                                    <Label className="text-[9px] font-black uppercase text-zinc-400">Name</Label>
+                                    <Input value={a.name} onChange={(e) => updateAddon(idx, 'name', e.target.value)} placeholder="Extra Cheese" className="h-8 text-sm bg-white" />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[9px] font-black uppercase text-zinc-400">Price (₹)</Label>
+                                    <Input type="number" value={a.price} onChange={(e) => updateAddon(idx, 'price', e.target.value)} placeholder="30" className="h-8 text-sm bg-white" />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <Label className="text-[9px] font-black uppercase text-zinc-400">Free Units</Label>
+                                    <Input type="number" value={a.free_limit} onChange={(e) => updateAddon(idx, 'free_limit', e.target.value)} placeholder="0" className="h-8 text-sm bg-white" />
+                                  </div>
+                                </div>
+                                <Button type="button" variant="ghost" size="icon" className="h-8 w-8 text-red-400 hover:text-red-600 shrink-0" onClick={() => removeAddon(idx)}>
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Customization groups — required/optional choice sets */}
                       <div className="flex items-center justify-between border-b pb-2">
-                        <h4 className="font-black text-swiggy-navy">Custom Groups</h4>
+                        <div>
+                          <h4 className="font-black text-swiggy-navy">Customization Groups</h4>
+                          <p className="text-[10px] text-zinc-500 font-medium">Choice sets, e.g. Size (pick one) or Toppings (pick many)</p>
+                        </div>
                         <Button type="button" variant="outline" size="sm" onClick={addManualGroup} className="h-8 font-bold border-dashed text-xs">
                           <Plus className="w-3 h-3 mr-1" /> Add Group
                         </Button>
@@ -751,7 +855,7 @@ export default function ProductsPage() {
                                   <SelectTrigger className="bg-white h-8 text-sm"><SelectValue /></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="SINGLE">Single Select</SelectItem>
-                                    <SelectItem value="MULTI">Multi Select</SelectItem>
+                                    <SelectItem value="MULTIPLE">Multi Select</SelectItem>
                                   </SelectContent>
                                 </Select>
                               </div>
@@ -797,7 +901,7 @@ export default function ProductsPage() {
                               <div className="space-y-2">
                                 {group.options.map((opt, oIdx) => (
                                   <div key={opt.id} className="flex items-start gap-2">
-                                    <div className="flex-1 grid grid-cols-2 gap-2">
+                                    <div className="flex-1 grid grid-cols-1 xs:grid-cols-2 gap-2">
                                       <Input placeholder="Item Name" value={opt.name} onChange={(e) => updateOption(gIdx, oIdx, 'name', e.target.value)} className="h-8 text-xs" />
                                       <Input type="number" placeholder="Price (₹)" value={opt.price_modifier} onChange={(e) => updateOption(gIdx, oIdx, 'price_modifier', e.target.value)} className="h-8 text-xs" />
                                     </div>
@@ -868,12 +972,17 @@ export default function ProductsPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="North Indian">North Indian</SelectItem>
-                      <SelectItem value="South Indian">South Indian</SelectItem>
-                      <SelectItem value="Italian">Italian</SelectItem>
-                      <SelectItem value="Fast Food">Fast Food</SelectItem>
-                      <SelectItem value="Desserts">Desserts</SelectItem>
-                      <SelectItem value="Beverages">Beverages</SelectItem>
+                      {(() => {
+                        const names = categoryOptions.map((c) => c.name);
+                        // Keep the product's existing category selectable even if it was
+                        // since disabled or predates the managed list.
+                        if (selectedProduct.category && !names.includes(selectedProduct.category)) {
+                          names.unshift(selectedProduct.category);
+                        }
+                        return names.map((name) => (
+                          <SelectItem key={name} value={name}>{name}</SelectItem>
+                        ));
+                      })()}
                     </SelectContent>
                   </Select>
                 </div>

@@ -467,6 +467,43 @@ model payment_transactions {
   @@schema("customer")
 }
 
+// UPI deep-link payment confirmation (no PSP webhook). One row per payment attempt;
+// the order is created ONLY when this row is authoritatively CONFIRMED (admin
+// reconciliation now, PSP/bank webhook later). Canonical here → pushed to Neon.
+model upi_payment_requests {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tr                  String    @unique @db.VarChar(35)
+  customer_id         String?   @db.Uuid
+  guest_id            String?
+  vendor_id           String    @db.Uuid
+  amount              Decimal   @db.Decimal(10, 2)
+  currency            String    @default("INR") @db.VarChar(8)
+  payee_vpa           String    @db.VarChar(255)
+  upi_app             String?   @db.VarChar(40)
+  status              String    @default("PENDING") @db.VarChar(20)
+  client_claim        String?   @db.VarChar(20)
+  claimed_utr         String?   @db.VarChar(40)
+  confirmed_utr       String?   @db.VarChar(40)
+  confirmed_amount    Decimal?  @db.Decimal(10, 2)
+  confirmation_source String?   @db.VarChar(30)
+  confirmed_by        String?   @db.VarChar(120)
+  confirmed_at        DateTime? @db.Timestamptz(6)
+  order_id            String?   @db.Uuid
+  delivery_preference String?   @db.VarChar(50)
+  address_id          String?   @db.Uuid
+  cart_id             String?   @db.Uuid
+  failure_reason      String?
+  expires_at          DateTime  @db.Timestamptz(6)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([status])
+  @@index([vendor_id])
+  @@index([customer_id])
+  @@map("upi_payment_requests")
+  @@schema("customer")
+}
+
 model support_requests {
   id                 String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   customer_id        String?    @db.Uuid
@@ -794,13 +831,12 @@ model vendors {
   account_status             AccountStatus                @default(PENDING)
   commissionModel            CommissionModel?             @map("commission_model")
   commissionRate             Decimal                      @default(5.0) @map("commission_rate") @db.Decimal(5, 2)
-  sfx_store_code             String?                      @db.VarChar(100)
   city                       String?                      @db.VarChar(100)
   pincode                    String?                      @db.VarChar(10)
   delivery_provider          String                       @default("SHADOWFAX") @db.VarChar(50)
-  shadowfax_linked           Boolean                      @default(false)
   phone_verified             Boolean                      @default(false)
   orders                     orders[]
+  byo_templates              byo_templates[]
   categories                 categories[]
   product_review_submissions product_review_submissions[]
   product_templates          product_templates[]
@@ -830,6 +866,7 @@ model admin_notifications {
   created_at   DateTime         @default(now()) @db.Timestamptz(6)
   reference_id String?          @unique
   is_cleared   Boolean          @default(false)
+  link         String?          // in-app destination (e.g. /vendors/<id>) the notification deep-links to
 
   @@schema("admin")
 }
@@ -927,23 +964,48 @@ model byo_templates {
   created_at                DateTime                    @default(now()) @db.Timestamptz(6)
   updated_at                DateTime                    @default(now()) @db.Timestamptz(6)
   description               String?
+  // Ownership + approval. vendor_id null = admin-authored (auto-approved). A
+  // vendor-authored template starts 'pending_review' and is only usable once
+  // 'approved' AND is_active. is_active is the admin on/off switch (disable).
+  vendor_id                 String?                     @db.Uuid
+  status                    String                      @default("approved") @db.VarChar(30)
+  rejection_reason          String?
+  is_active                 Boolean                     @default(true)
   byo_template_groups       byo_template_groups[]
   vendor_assigned_templates vendor_assigned_templates[]
+  vendors                   vendors?                    @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
 
   @@schema("vendor_delivery")
 }
 
 model byo_template_groups {
-  id             String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  template_id    String        @db.Uuid
-  name           String        @db.VarChar(255)
-  selection_type String        @default("SINGLE") @db.VarChar(50)
-  is_required    Boolean       @default(false)
-  max_limit      Int?
-  display_order  Int           @default(0)
-  extra_price    Decimal       @default(0) @db.Decimal(10, 2)
-  free_threshold Int           @default(0)
-  byo_templates  byo_templates @relation(fields: [template_id], references: [id], onDelete: Cascade)
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_id          String                 @db.Uuid
+  name                 String                 @db.VarChar(255)
+  selection_type       String                 @default("SINGLE") @db.VarChar(50)
+  is_required          Boolean                @default(false)
+  max_limit            Int?
+  display_order        Int                    @default(0)
+  extra_price          Decimal                @default(0) @db.Decimal(10, 2)
+  free_threshold       Int                    @default(0)
+  byo_templates        byo_templates          @relation(fields: [template_id], references: [id], onDelete: Cascade)
+  byo_template_options byo_template_options[]
+
+  @@schema("vendor_delivery")
+}
+
+// The actual choices inside a BYO template group (e.g. group "Sauce" → options
+// Ketchup / Mayo / Peri-Peri). Materialized into product_customization_options
+// when a template is attached to a product.
+model byo_template_options {
+  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  group_id            String              @db.Uuid
+  name                String              @db.VarChar(255)
+  price_modifier      Decimal             @default(0) @db.Decimal(10, 2)
+  is_available        Boolean             @default(true)
+  display_order       Int                 @default(0)
+  image_url           String?
+  byo_template_groups byo_template_groups @relation(fields: [group_id], references: [id], onDelete: Cascade)
 
   @@schema("vendor_delivery")
 }
@@ -993,6 +1055,21 @@ model categories {
   created_at    DateTime   @default(now()) @db.Timestamptz(6)
   vendors       vendors?   @relation(fields: [vendor_id], references: [id], onDelete: Cascade)
   products      products[] @relation("ProductToCategory")
+
+  @@schema("vendor_delivery")
+}
+
+// Master list of vendor BUSINESS categories (cuisine / store type) chosen during
+// vendor registration. Admin-managed (add/edit/soft-disable). This is distinct from
+// the `categories` table above, which holds per-vendor product/menu categories.
+model business_categories {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @unique @db.VarChar(100)
+  is_food       Boolean  @default(true)
+  display_order Int      @default(0)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime @default(now()) @updatedAt @db.Timestamptz(6)
 
   @@schema("vendor_delivery")
 }
