@@ -329,8 +329,9 @@ model feedback {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   order_id     String    @unique @db.Uuid
   customer_id  String    @db.Uuid
-  rating       Int       @db.SmallInt
-  comment      String?   @db.VarChar(150)
+  rating          Int       @db.SmallInt
+  delivery_rating Int?      @db.SmallInt
+  comment         String?   @db.VarChar(150)
   submitted_at DateTime  @default(now()) @db.Timestamptz(6)
   customers    customers @relation(fields: [customer_id], references: [id])
   orders       orders    @relation(fields: [order_id], references: [id], onDelete: Cascade)
