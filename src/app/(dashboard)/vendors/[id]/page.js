@@ -302,7 +302,8 @@ export default function VendorDetailPage() {
         body: JSON.stringify({ action: "APPROVE_KYC" })
       });
       if (!res.ok) throw new Error("Failed to approve KYC");
-      toast.success("KYC Approved successfully");
+      toast.success("KYC approved — vendor is now ACTIVE and can go online");
+      mutate();
     } catch (error) {
       toast.error(error.message);
     }
