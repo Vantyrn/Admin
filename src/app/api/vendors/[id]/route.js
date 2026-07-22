@@ -4,6 +4,32 @@ import crypto from "crypto";
 import { logActivity } from "@/lib/audit";
 import { getAdmin } from "@/lib/auth";
 
+/**
+ * Ask the backend to push + socket-emit a status change we just wrote ourselves.
+ * This panel writes to the database directly, so it can't reach the backend's
+ * socket.io instance or firebase-admin — without this call a vendor approved here
+ * learned about it only by polling, and got nothing at all while the app was closed.
+ * Fire-and-forget: delivery must never fail the admin's action.
+ */
+async function notifyVendorStatus(vendorId, status, reason) {
+  const base = process.env.NEXT_PUBLIC_BACKEND_URL;
+  const key = process.env.ADMIN_SECRET;
+  if (!base || !key) {
+    console.warn("[VENDOR-STATUS] No NEXT_PUBLIC_BACKEND_URL/ADMIN_SECRET — vendor not notified.");
+    return;
+  }
+  try {
+    const res = await fetch(`${base.replace(/\/$/, "")}/api/admin/vendors/${vendorId}/notify-status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Admin-Key": key },
+      body: JSON.stringify({ status, reason: reason || null }),
+    });
+    if (!res.ok) console.warn(`[VENDOR-STATUS] notify-status returned ${res.status}`);
+  } catch (e) {
+    console.warn("[VENDOR-STATUS] notify-status call failed:", e.message);
+  }
+}
+
 export async function GET(request, { params }) {
   try {
     const { id } = await params;
@@ -291,9 +317,14 @@ export async function PATCH(request, { params }) {
 
     let newStatus = vendor.account_status;
     let kycDecision = null;
+    // Set only when profile_status must differ from account_status (timed disables).
+    let profileStatusOverride = null;
 
     if (action === "APPROVE_KYC") {
-      newStatus = "UNDER_REVIEW"; // Move to under review after KYC approval
+      // One-step approval: approving the KYC activates the vendor. It used to land on
+      // UNDER_REVIEW while toasting "KYC Approved successfully", so the admin thought
+      // they were done while the vendor app correctly kept showing "pending".
+      newStatus = "ACTIVE";
       kycDecision = "approved";
     } else if (action === "REJECT_KYC") {
       newStatus = "REJECTED";
@@ -308,12 +339,16 @@ export async function PATCH(request, { params }) {
       newStatus = "SUSPENDED";
     } else if (action === "DISABLE") {
       const { duration } = body;
+      newStatus = "DISABLED";
       if (duration && duration !== "permanent") {
         const hours = parseInt(duration);
-        const expiryDate = new Date(Date.now() + hours * 60 * 60 * 1000);
-        newStatus = `DISABLED:${expiryDate.toISOString()}`;
-      } else {
-        newStatus = "DISABLED";
+        // The expiry rides on profiles.profile_status only. account_status is the
+        // AccountStatus *enum*, so writing "DISABLED:<date>" there always threw and
+        // every timed disable failed. Milliseconds are dropped because profile_status
+        // is VarChar(30) and the full ISO form overflows it at 33 chars.
+        profileStatusOverride = `DISABLED:${new Date(Date.now() + hours * 60 * 60 * 1000)
+          .toISOString()
+          .replace(/\.\d{3}Z$/, "Z")}`;
       }
     } else if (action === "REACTIVATE") {
       newStatus = "ACTIVE";
@@ -325,6 +360,16 @@ export async function PATCH(request, { params }) {
       where: { id },
       data: { account_status: newStatus }
     });
+
+    // Keep profiles.profile_status in step. The backend self-heals it on the next
+    // /vendor/profile GET, but until then the two tables disagreed and the app read
+    // whichever one it happened to poll first.
+    if (vendor.profile_id) {
+      await prisma.profiles.update({
+        where: { id: vendor.profile_id },
+        data: { profile_status: profileStatusOverride || newStatus }
+      }).catch((e) => console.warn("Profile status sync failed:", e.message));
+    }
 
     if (newStatus !== vendor.account_status) {
       await prisma.vendorStatusLog.create({
@@ -370,13 +415,17 @@ export async function PATCH(request, { params }) {
     }
 
     const admin = await getAdmin();
-    await logActivity(`VENDOR_${action}`, { 
-      vendorId: id, 
+    await logActivity(`VENDOR_${action}`, {
+      vendorId: id,
       businessName: vendor.business_name,
       oldStatus: vendor.account_status,
       newStatus,
-      reason 
+      reason
     }, admin?.id);
+
+    if (newStatus !== vendor.account_status) {
+      await notifyVendorStatus(id, newStatus, reason);
+    }
 
     return NextResponse.json({ success: true, newStatus });
   } catch (error) {
