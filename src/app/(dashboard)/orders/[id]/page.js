@@ -68,9 +68,9 @@ function LiveTrackingMap({ tracking }) {
         center={mapCenter}
         zoom={14}
       >
-        {tracking?.vendor && <Marker position={tracking.vendor} title="Vendor" icon="http://maps.google.com/mapfiles/ms/icons/red-dot.png" />}
-        {tracking?.customer && <Marker position={tracking.customer} title="Customer" icon="http://maps.google.com/mapfiles/ms/icons/green-dot.png" />}
-        {tracking?.rider && <Marker position={tracking.rider} title="Rider" icon="http://maps.google.com/mapfiles/ms/icons/blue-dot.png" />}
+        {tracking?.vendor && <Marker position={tracking.vendor} title="Vendor" icon="https://maps.google.com/mapfiles/ms/icons/red-dot.png" />}
+        {tracking?.customer && <Marker position={tracking.customer} title="Customer" icon="https://maps.google.com/mapfiles/ms/icons/green-dot.png" />}
+        {tracking?.rider && <Marker position={tracking.rider} title="Rider" icon="https://maps.google.com/mapfiles/ms/icons/blue-dot.png" />}
       </GoogleMap>
   ) : <Skeleton className="w-full h-[400px] rounded-2xl" />
 }
